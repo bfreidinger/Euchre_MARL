@@ -1,10 +1,11 @@
 """
-Evaluate a saved QMIX checkpoint against random or rule-based opponents.
+Evaluate a saved QMIX checkpoint against random, rule-based, or DQN opponents.
 """
 
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import torch
 import rlcard
 from rlcard.agents.dqn_agent_pytorch import DQNAgent
 from rlcard.agents.random_agent import RandomAgent
@@ -13,9 +14,11 @@ from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-OPPONENT   = 'rule'   # 'rule' or 'random'
+OPPONENT   = 'random'   # 'rule', 'random', or 'dqn'
 NUM_GAMES  = 100
 SHOW_HANDS = True     # print score after every hand
+
+DQN_CKPT_PATH = os.path.join(os.path.dirname(__file__), '..', 'dqn_agent', 'dqn_euchre.pt')
 
 # ── Build agents ───────────────────────────────────────────────────────────────
 
@@ -41,6 +44,17 @@ if OPPONENT == 'random':
     opp1 = RandomAgent(ACTION_NUM)
     opp3 = RandomAgent(ACTION_NUM)
     opp_label = 'Random'
+elif OPPONENT == 'dqn':
+    # The DQN checkpoint uses scopes 'agent0' / 'agent2'; reuse those scopes
+    # for the opponent agents so the weight keys match on load.
+    opp1 = DQNAgent(scope='agent0', action_num=ACTION_NUM,
+                    state_shape=[OBS_DIM], mlp_layers=[128, 128])
+    opp3 = DQNAgent(scope='agent2', action_num=ACTION_NUM,
+                    state_shape=[OBS_DIM], mlp_layers=[128, 128])
+    dqn_ckpt = torch.load(DQN_CKPT_PATH, map_location=opp1.device)
+    opp1.load(dqn_ckpt)
+    opp3.load(dqn_ckpt)
+    opp_label = 'DQN'
 else:
     opp1 = EuchreRuleAgent()
     opp3 = EuchreRuleAgent()
