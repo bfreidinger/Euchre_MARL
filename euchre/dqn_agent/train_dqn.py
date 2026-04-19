@@ -30,12 +30,12 @@ from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 OBS_DIM    = 48
 ACTION_NUM = 54
 
-EPISODES          = 100_000
+EPISODES          = 2_000_000
 BATCH_SIZE        = 64
 MEMORY_SIZE       = 10_000
 WARMUP_EPISODES   = 500
 TARGET_SYNC_EVERY = 1_000
-EVAL_EVERY        = 10_000
+EVAL_EVERY        = 50_000
 EVAL_GAMES        = 100
 
 LR            = 5e-4
@@ -45,6 +45,8 @@ EPSILON_END   = 0.05
 EPSILON_STEPS = 150_000
 
 CKPT_PATH = os.path.join(os.path.dirname(__file__), 'dqn_euchre.pt')
+
+RESUME = False  # set True to continue training from CKPT_PATH
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -122,8 +124,15 @@ if __name__ == '__main__':
     opp1   = EuchreRuleAgent()
     opp3   = EuchreRuleAgent()
 
-    # env.run(is_training=True) calls agent.feed() automatically for
-    # each player's own transitions — no extra bookkeeping needed.
+    if RESUME and os.path.exists(CKPT_PATH):
+        load(agent0, agent2, CKPT_PATH)
+        # Pin epsilon to its trained floor without touching total_t,
+        # so the replay buffer still fills normally during warmup.
+        for a in (agent0, agent2):
+            a.epsilons = np.ones(EPSILON_STEPS) * EPSILON_END
+    elif RESUME:
+        print(f"Warning: RESUME=True but {CKPT_PATH} not found — starting fresh.")
+
     env.set_agents([agent0, opp1, agent2, opp3])
 
     print("=" * 60)
