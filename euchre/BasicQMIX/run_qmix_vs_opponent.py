@@ -14,7 +14,7 @@ from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 OPPONENT   = 'rule'   # 'rule' or 'random'
-NUM_GAMES  = 20
+NUM_GAMES  = 100
 SHOW_HANDS = True     # print score after every hand
 
 # ── Build agents ───────────────────────────────────────────────────────────────
