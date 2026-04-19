@@ -169,9 +169,12 @@ def get_session_id(environ):
 
 @dataclass
 class MatchSession:
+    mode: str
+    south_family: str
     partner_family: str
     opp_left_family: str
     opp_right_family: str
+    south_agent: object | None = field(init=False, default=None)
     partner_agent: object = field(init=False)
     opp_left_agent: object = field(init=False)
     opp_right_agent: object = field(init=False)
@@ -191,6 +194,8 @@ class MatchSession:
     reveal_winner: int | None = field(init=False, default=None)
 
     def __post_init__(self):
+        if self.mode == "spectator":
+            self.south_agent = build_model_policy(self.south_family, "south")
         self.partner_agent = build_model_policy(self.partner_family, "partner")
         self.opp_left_agent = build_model_policy(self.opp_left_family, "opp_left")
         self.opp_right_agent = build_model_policy(self.opp_right_family, "opp_right")
@@ -209,6 +214,8 @@ class MatchSession:
         self._update_turn_status()
 
     def _agent_for_player(self, player_id):
+        if player_id == 0:
+            return self.south_agent
         if player_id == 1:
             return self.opp_left_agent
         if player_id == 2:
@@ -275,12 +282,15 @@ class MatchSession:
                 f"{PLAYER_NAMES[self.current_player]} is up next."
             )
             return
-        if self.current_player == 0:
+        if self.current_player == 0 and self.mode != "spectator":
             self.status = "Your turn."
         else:
             self.status = f"{PLAYER_NAMES[self.current_player]} is up next."
 
     def play_human_action(self, action_id):
+        if self.mode == "spectator":
+            self.status = "Spectator mode is running policies for every seat."
+            return
         if self.match_over:
             self.status = "The match is already over. Start a new match to keep playing."
             return
@@ -307,7 +317,7 @@ class MatchSession:
             self._update_turn_status()
 
     def advance_ai_turn(self):
-        if self.match_over or self.hand_over or self.current_player == 0:
+        if self.match_over or self.hand_over or (self.current_player == 0 and self.mode != "spectator"):
             self._update_turn_status()
             return False
 
@@ -390,7 +400,7 @@ class MatchSession:
 
         legal_actions = []
         grouped_actions = {"bid": [], "play": [], "discard": []}
-        if self.current_player == 0 and not self.hand_over and self.state:
+        if self.current_player == 0 and self.mode != "spectator" and not self.hand_over and self.state:
             raw_actions = self.state["raw_legal_actions"]
             for action_id, action_text in zip(self.state["legal_actions"], raw_actions):
                 item = {
@@ -422,12 +432,18 @@ class MatchSession:
                 payload["action_id"] = None
                 payload["action_kind"] = None
             visible_hand.append(payload)
+        def make_visible_cards(player_id: int):
+            if self.mode == "spectator" or player_id == 0:
+                return [card_payload(card) for card in self.env.game.get_state(player_id)["hand"]]
+            count = len(self.env.game.players[player_id].hand)
+            return [card_payload("SA", face_up=False, label="Hidden")] * count
+
         seat_info = {
             0: {
                 "name": PLAYER_NAMES[0],
                 "position": "south",
                 "count": len(self.env.game.players[0].hand),
-                "cards": visible_hand,
+                "cards": make_visible_cards(0),
                 "face_up": True,
                 "is_current": self.current_player == 0,
                 "is_dealer": self.env.game.dealer_player_id == 0,
@@ -436,8 +452,8 @@ class MatchSession:
                 "name": PLAYER_NAMES[1],
                 "position": "west",
                 "count": len(self.env.game.players[1].hand),
-                "cards": [card_payload("SA", face_up=False, label="Hidden")] * len(self.env.game.players[1].hand),
-                "face_up": False,
+                "cards": make_visible_cards(1),
+                "face_up": self.mode == "spectator",
                 "is_current": self.current_player == 1,
                 "is_dealer": self.env.game.dealer_player_id == 1,
             },
@@ -445,8 +461,8 @@ class MatchSession:
                 "name": PLAYER_NAMES[2],
                 "position": "north",
                 "count": len(self.env.game.players[2].hand),
-                "cards": [card_payload("SA", face_up=False, label="Hidden")] * len(self.env.game.players[2].hand),
-                "face_up": False,
+                "cards": make_visible_cards(2),
+                "face_up": self.mode == "spectator",
                 "is_current": self.current_player == 2,
                 "is_dealer": self.env.game.dealer_player_id == 2,
             },
@@ -454,8 +470,8 @@ class MatchSession:
                 "name": PLAYER_NAMES[3],
                 "position": "east",
                 "count": len(self.env.game.players[3].hand),
-                "cards": [card_payload("SA", face_up=False, label="Hidden")] * len(self.env.game.players[3].hand),
-                "face_up": False,
+                "cards": make_visible_cards(3),
+                "face_up": self.mode == "spectator",
                 "is_current": self.current_player == 3,
                 "is_dealer": self.env.game.dealer_player_id == 3,
             },
@@ -472,9 +488,23 @@ class MatchSession:
         elif grouped_actions["play"]:
             bidding_prompt = "Choose a card to play to the trick."
 
+        current_options = []
+        if self.state and not self.hand_over:
+            for action_id, action_text in zip(self.state.get("legal_actions", []), self.state.get("raw_legal_actions", [])):
+                current_options.append(
+                    {
+                        "id": action_id,
+                        "raw": action_text,
+                        "label": format_action(action_text),
+                        "kind": action_kind(action_text),
+                    }
+                )
+
         return {
             "policy_labels": POLICY_LABELS,
             "selected": {
+                "mode": self.mode,
+                "south": self.south_family,
                 "partner": self.partner_family,
                 "opp_left": self.opp_left_family,
                 "opp_right": self.opp_right_family,
@@ -489,8 +519,10 @@ class MatchSession:
             "match_over": self.match_over,
             "hand_over": self.hand_over,
             "animation_tick": self.animation_tick,
-            "auto_advance": (self.current_player != 0 and not self.hand_over and not self.match_over),
-            "ai_thinking": (self.current_player != 0 and not self.hand_over and not self.match_over),
+            "mode": self.mode,
+            "spectator_mode": self.mode == "spectator",
+            "auto_advance": ((self.mode == "spectator" or self.current_player != 0) and not self.hand_over and not self.match_over),
+            "ai_thinking": ((self.mode == "spectator" or self.current_player != 0) and not self.hand_over and not self.match_over),
             "current_player": PLAYER_NAMES.get(self.current_player, "Unknown"),
             "current_player_id": self.current_player,
             "dealer": PLAYER_NAMES.get(self.env.game.dealer_player_id, "Unknown"),
@@ -513,6 +545,7 @@ class MatchSession:
             "legal_actions": legal_actions,
             "grouped_actions": grouped_actions,
             "bidding_prompt": bidding_prompt,
+            "current_options": current_options,
             "action_log": list(reversed(self.action_log[-16:])),
         }
 
@@ -522,6 +555,8 @@ def render(start_response, session=None):
     context = {
         "policy_labels": POLICY_LABELS,
         "selected": {
+            "mode": "human",
+            "south": "baseline",
             "partner": "rule",
             "opp_left": "rule",
             "opp_right": "rule",
@@ -564,6 +599,8 @@ def app(environ, start_response):
     if method == "POST" and path == "/new-match":
         form = parse_post(environ)
         session = MatchSession(
+            mode=form.get("mode", "human"),
+            south_family=form.get("south", "baseline"),
             partner_family=form.get("partner", "rule"),
             opp_left_family=form.get("opp_left", "rule"),
             opp_right_family=form.get("opp_right", "rule"),
@@ -617,9 +654,13 @@ def app(environ, start_response):
     return render(start_response, session=session)
 
 
+# Standard WSGI entrypoint for gunicorn.
+application = app
+
+
 def main():
     host = os.environ.get("EUCHRE_WEB_HOST", "127.0.0.1")
-    port = int(os.environ.get("EUCHRE_WEB_PORT", "8000"))
+    port = int(os.environ.get("PORT") or os.environ.get("EUCHRE_WEB_PORT", "8000"))
     with make_server(host, port, app) as server:
         print(f"Euchre web app running at http://{host}:{port}")
         server.serve_forever()
