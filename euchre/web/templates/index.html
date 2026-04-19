@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Euchre Policy Arena</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Interactive Evaluation</p>
+          <h1>Euchre Policy Arena</h1>
+          <p class="lede">A playable Euchre table for testing your trained policies. Pick your partner, choose the opponents, then bid and play hands like a real game.</p>
+        </div>
+      </section>
+
+      <section class="panel setup">
+        <h2>Match Setup</h2>
+        <form method="post" action="/new-match" class="setup-grid" id="setup-form">
+          <label>
+            <span>Partner Policy</span>
+            <select name="partner">
+              {% for key, label in policy_labels.items() %}
+              <option value="{{ key }}" {% if selected.partner == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>
+            <span>Left Opponent</span>
+            <select name="opp_left">
+              {% for key, label in policy_labels.items() %}
+              <option value="{{ key }}" {% if selected.opp_left == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>
+            <span>Right Opponent</span>
+            <select name="opp_right">
+              {% for key, label in policy_labels.items() %}
+              <option value="{{ key }}" {% if selected.opp_right == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <button type="submit" class="primary wide">Start New Match</button>
+        </form>
+      </section>
+
+      {% if has_session %}
+      <section class="scoreboard panel">
+        <div class="scorecard">
+          <span class="label">You + Partner</span>
+          <strong id="score-you">{{ score.you }}</strong>
+        </div>
+        <div class="scorecard">
+          <span class="label">Opponents</span>
+          <strong id="score-opp">{{ score.opp }}</strong>
+        </div>
+        <div class="scorecard meta">
+          <span class="label">Race To</span>
+          <strong>{{ match_target }}</strong>
+        </div>
+      </section>
+
+      <section class="table-layout">
+        <section class="panel felt-panel">
+          <div class="table-header">
+            <div>
+              <h2>Live Table</h2>
+              <p id="table-status">{{ status }}</p>
+            </div>
+            <div class="mini-stats">
+              <div><span>Dealer</span><strong id="dealer-label">{{ dealer }}</strong></div>
+              <div><span>Trump</span><strong id="trump-label">{{ trump }}</strong></div>
+              <div><span>Tricks</span><strong id="tricks-label">{{ team_tricks }} - {{ opp_tricks }}</strong></div>
+            </div>
+          </div>
+
+          <div class="table-stage" data-tick="{{ animation_tick }}" id="table-stage">
+            <div class="seat seat-north {% if seats[2].is_current %}active{% endif %}" id="seat-2" data-player-id="2">
+              <div class="seat-meta">
+                <span id="seat-2-name">{{ seats[2].name }}</span>
+                <strong id="seat-2-meta">{{ seats[2].count }} cards{% if seats[2].is_dealer %} · dealer{% endif %}</strong>
+              </div>
+              <div class="fan fan-top" id="seat-2-fan">
+                {% for card in seats[2].cards %}
+                <div class="card-shell back"></div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="seat seat-west {% if seats[1].is_current %}active{% endif %}" id="seat-1" data-player-id="1">
+              <div class="seat-meta">
+                <span id="seat-1-name">{{ seats[1].name }}</span>
+                <strong id="seat-1-meta">{{ seats[1].count }} cards{% if seats[1].is_dealer %} · dealer{% endif %}</strong>
+              </div>
+              <div class="fan fan-side" id="seat-1-fan">
+                {% for card in seats[1].cards %}
+                <div class="card-shell back side"></div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="seat seat-east {% if seats[3].is_current %}active{% endif %}" id="seat-3" data-player-id="3">
+              <div class="seat-meta">
+                <span id="seat-3-name">{{ seats[3].name }}</span>
+                <strong id="seat-3-meta">{{ seats[3].count }} cards{% if seats[3].is_dealer %} · dealer{% endif %}</strong>
+              </div>
+              <div class="fan fan-side" id="seat-3-fan">
+                {% for card in seats[3].cards %}
+                <div class="card-shell back side"></div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="seat seat-south {% if seats[0].is_current %}active{% endif %}" id="seat-0" data-player-id="0">
+              <div class="seat-meta">
+                <span id="seat-0-name">{{ seats[0].name }}</span>
+                <strong id="seat-0-meta">{{ seats[0].count }} cards{% if seats[0].is_dealer %} · dealer{% endif %}</strong>
+              </div>
+            </div>
+
+            <div class="table-center">
+              <div class="flipped-wrapper" id="flipped-wrapper" {% if not flipped %}hidden{% endif %}>
+                <p class="stack-label">Turn-Up Card</p>
+                <div class="card-shell face {% if flipped %}{{ flipped.color }}{% endif %}" id="flipped-card">
+                  <span class="rank" id="flipped-rank">{% if flipped %}{{ flipped.rank }}{% endif %}</span>
+                  <span class="suit" id="flipped-suit">{% if flipped %}{{ flipped.suit }}{% endif %}</span>
+                </div>
+              </div>
+
+              <div class="trick-area" id="trick-area">
+                {% for player_id, class_name in [(2, 'north'), (1, 'west'), (3, 'east'), (0, 'south')] %}
+                <div class="trick-slot trick-{{ class_name }}">
+                  {% if center_by_player[player_id] %}
+                  <div class="card-shell face {{ center_by_player[player_id].card.color }} enter-card">
+                    <span class="rank">{{ center_by_player[player_id].card.rank }}</span>
+                    <span class="suit">{{ center_by_player[player_id].card.suit }}</span>
+                  </div>
+                  <span class="slot-label">{{ center_by_player[player_id].owner }}</span>
+                  {% else %}
+                  <div class="ghost-slot"></div>
+                  <span class="slot-label">{{ seats[player_id].name }}</span>
+                  {% endif %}
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+
+          <div class="human-hand-zone">
+            <div class="section-heading compact">
+              <h3>Your Hand</h3>
+              <p>Click cards or bidding buttons when it is your turn.</p>
+            </div>
+            <div class="hand hand-playable" id="human-hand">
+              {% for card in hand_cards %}
+              {% if card.action_id %}
+              <button
+                type="button"
+                class="card-shell face {{ card.color }} hand-card-large hand-action action-trigger"
+                data-action="{{ card.action_id }}"
+                data-card-origin="hand">
+                <span class="rank">{{ card.rank }}</span>
+                <span class="suit">{{ card.suit }}</span>
+              </button>
+              {% else %}
+              <div class="card-shell face {{ card.color }} hand-card-large disabled-card">
+                <span class="rank">{{ card.rank }}</span>
+                <span class="suit">{{ card.suit }}</span>
+              </div>
+              {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        </section>
+
+        <aside class="sidebar">
+          <section class="panel">
+            <div class="section-heading compact">
+              <h2>Bid / Play</h2>
+              <p id="bidding-prompt">{{ bidding_prompt or "Waiting for the next action." }}</p>
+            </div>
+
+            <div class="action-section" id="bid-section" {% if not grouped_actions.bid %}hidden{% endif %}>
+              <h3>Bidding</h3>
+              <div class="actions bid-actions" id="bid-actions">
+                {% for action in grouped_actions.bid %}
+                <button type="button" data-action="{{ action.id }}" class="action-trigger {% if action.raw == 'pass' %}secondary{% else %}accent{% endif %}">
+                    {{ action.label }}
+                </button>
+                {% endfor %}
+              </div>
+              <p class="microcopy">Yes, you can choose trump here the standard Euchre way: either order up the turn-up card or call a suit in round two.</p>
+            </div>
+
+            <div class="action-section" id="discard-section" {% if not grouped_actions.discard %}hidden{% endif %}>
+              <h3>Dealer Discard</h3>
+              <div class="actions card-actions" id="discard-actions">
+                {% for action in grouped_actions.discard %}
+                  <button type="button" data-action="{{ action.id }}" class="action-trigger card-button">
+                    <span>{{ action.card.rank }}{{ action.card.suit }}</span>
+                    <small>Discard</small>
+                  </button>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="action-section" id="play-section" {% if not grouped_actions.play %}hidden{% endif %}>
+              <h3>Play a Card</h3>
+              <div class="actions card-actions" id="play-actions">
+                {% for action in grouped_actions.play %}
+                  <button type="button" data-action="{{ action.id }}" class="action-trigger card-button">
+                    <span>{{ action.card.rank }}{{ action.card.suit }}</span>
+                    <small>Play</small>
+                  </button>
+                {% endfor %}
+              </div>
+            </div>
+
+            <p class="muted" id="no-actions" {% if legal_actions %}hidden{% endif %}>No legal actions are available right now. If the hand ended, start the next hand.</p>
+            <p class="microcopy">Playable cards in your hand are clickable, so the card you choose can animate from your seat into the center.</p>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading compact">
+              <h2>Hand Controls</h2>
+              <p>Advance the match after each hand.</p>
+            </div>
+            <button type="button" class="primary" id="next-hand-btn">Next Hand</button>
+            <p class="result" id="hand-result" {% if not hand_result %}hidden{% endif %}>{{ hand_result }}</p>
+            <div class="small-facts">
+              <div><span>Current Player</span><strong id="current-player-label">{{ current_player }}</strong></div>
+              <div><span>Turned Down</span><strong id="turned-down-label">{{ turned_down }}</strong></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading compact">
+              <h2>Recent Actions</h2>
+              <p>Newest first.</p>
+            </div>
+            {% if action_log %}
+            <ul class="log" id="action-log">
+              {% for item in action_log %}
+              <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted" id="empty-log">No actions logged yet.</p>
+            <ul class="log" id="action-log" hidden></ul>
+            {% endif %}
+          </section>
+        </aside>
+      </section>
+      {% endif %}
+    </main>
+    <script id="initial-state" type="application/json">{{ state_json | safe }}</script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
