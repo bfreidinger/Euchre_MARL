@@ -3,6 +3,8 @@
   const setupForm = document.getElementById("setup-form");
   const nextHandBtn = document.getElementById("next-hand-btn");
   const tableStage = document.getElementById("table-stage");
+  const modeSelect = document.getElementById("mode-select");
+  const southPolicyWrap = document.getElementById("south-policy-wrap");
 
   let state = initialStateEl ? JSON.parse(initialStateEl.textContent || "null") : null;
   let autoAdvanceTimer = null;
@@ -98,7 +100,20 @@
         fanEl.innerHTML = "";
       } else {
         const side = playerId === 1 || playerId === 3;
-        fanEl.innerHTML = new Array(seat.count).fill(cardBackHtml(side)).join("");
+        if (seat.face_up) {
+          fanEl.innerHTML = (seat.cards || [])
+            .map(
+              (card) => `
+                <div class="card-shell face ${card.color} ${side ? "side" : ""} mini-face">
+                  <span class="rank">${card.rank}</span>
+                  <span class="suit">${card.suit}</span>
+                </div>
+              `
+            )
+            .join("");
+        } else {
+          fanEl.innerHTML = new Array(seat.count).fill(cardBackHtml(side)).join("");
+        }
       }
     }
   }
@@ -281,8 +296,23 @@
       playActions.innerHTML = grouped.play.map(actionButtonHtml).join("");
     }
     if (noActions) {
-      noActions.hidden = (state.legal_actions || []).length > 0;
+      noActions.hidden = (state.legal_actions || []).length > 0 || state.spectator_mode;
     }
+  }
+
+  function renderCurrentOptions() {
+    const wrap = document.getElementById("current-options");
+    if (!wrap) {
+      return;
+    }
+    const options = state.current_options || [];
+    if (!options.length) {
+      wrap.innerHTML = `<p class="muted">No options available right now.</p>`;
+      return;
+    }
+    wrap.innerHTML = options
+      .map((option) => `<div class="option-chip">${option.label}</div>`)
+      .join("");
   }
 
   function renderLog() {
@@ -336,6 +366,7 @@
     renderCenter(previousState);
     renderHand();
     renderActions();
+    renderCurrentOptions();
     renderLog();
 
     if (
@@ -428,6 +459,12 @@
         formData[key] = value;
       });
       startNewMatch(formData);
+    });
+  }
+
+  if (modeSelect && southPolicyWrap) {
+    modeSelect.addEventListener("change", () => {
+      southPolicyWrap.hidden = modeSelect.value !== "spectator";
     });
   }
 

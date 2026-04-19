@@ -20,6 +20,23 @@
         <h2>Match Setup</h2>
         <form method="post" action="/new-match" class="setup-grid" id="setup-form">
           <label>
+            <span>Mode</span>
+            <select name="mode" id="mode-select">
+              <option value="human" {% if selected.mode == 'human' %}selected{% endif %}>Human Play</option>
+              <option value="spectator" {% if selected.mode == 'spectator' %}selected{% endif %}>Spectator</option>
+            </select>
+          </label>
+
+          <label id="south-policy-wrap" {% if selected.mode != 'spectator' %}hidden{% endif %}>
+            <span>South Seat Policy</span>
+            <select name="south">
+              {% for key, label in policy_labels.items() %}
+              <option value="{{ key }}" {% if selected.south == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>
             <span>Partner Policy</span>
             <select name="partner">
               {% for key, label in policy_labels.items() %}
@@ -88,7 +105,14 @@
               </div>
               <div class="fan fan-top" id="seat-2-fan">
                 {% for card in seats[2].cards %}
+                {% if seats[2].face_up %}
+                <div class="card-shell face {{ card.color }} mini-face">
+                  <span class="rank">{{ card.rank }}</span>
+                  <span class="suit">{{ card.suit }}</span>
+                </div>
+                {% else %}
                 <div class="card-shell back"></div>
+                {% endif %}
                 {% endfor %}
               </div>
             </div>
@@ -100,7 +124,14 @@
               </div>
               <div class="fan fan-side" id="seat-1-fan">
                 {% for card in seats[1].cards %}
+                {% if seats[1].face_up %}
+                <div class="card-shell face {{ card.color }} side mini-face">
+                  <span class="rank">{{ card.rank }}</span>
+                  <span class="suit">{{ card.suit }}</span>
+                </div>
+                {% else %}
                 <div class="card-shell back side"></div>
+                {% endif %}
                 {% endfor %}
               </div>
             </div>
@@ -112,7 +143,14 @@
               </div>
               <div class="fan fan-side" id="seat-3-fan">
                 {% for card in seats[3].cards %}
+                {% if seats[3].face_up %}
+                <div class="card-shell face {{ card.color }} side mini-face">
+                  <span class="rank">{{ card.rank }}</span>
+                  <span class="suit">{{ card.suit }}</span>
+                </div>
+                {% else %}
                 <div class="card-shell back side"></div>
+                {% endif %}
                 {% endfor %}
               </div>
             </div>
@@ -154,8 +192,8 @@
 
           <div class="human-hand-zone">
             <div class="section-heading compact">
-              <h3>Your Hand</h3>
-              <p>Click cards or bidding buttons when it is your turn.</p>
+              <h3>{% if spectator_mode %}South Hand{% else %}Your Hand{% endif %}</h3>
+              <p>{% if spectator_mode %}All seats are policy-controlled and every hand is visible.{% else %}Click cards or bidding buttons when it is your turn.{% endif %}</p>
             </div>
             <div class="hand hand-playable" id="human-hand">
               {% for card in hand_cards %}
@@ -222,8 +260,8 @@
               </div>
             </div>
 
-            <p class="muted" id="no-actions" {% if legal_actions %}hidden{% endif %}>No legal actions are available right now. If the hand ended, start the next hand.</p>
-            <p class="microcopy">Playable cards in your hand are clickable, so the card you choose can animate from your seat into the center.</p>
+            <p class="muted" id="no-actions" {% if legal_actions or spectator_mode %}hidden{% endif %}>No legal actions are available right now. If the hand ended, start the next hand.</p>
+            <p class="microcopy">{% if spectator_mode %}Spectator mode shows every player hand and the acting player's legal choices before each move.{% else %}Playable cards in your hand are clickable, so the card you choose can animate from your seat into the center.{% endif %}</p>
           </section>
 
           <section class="panel">
@@ -236,6 +274,22 @@
             <div class="small-facts">
               <div><span>Current Player</span><strong id="current-player-label">{{ current_player }}</strong></div>
               <div><span>Turned Down</span><strong id="turned-down-label">{{ turned_down }}</strong></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading compact">
+              <h2>Current Options</h2>
+              <p>Legal actions available to the acting seat right now.</p>
+            </div>
+            <div id="current-options" class="option-list">
+              {% if current_options %}
+                {% for option in current_options %}
+                <div class="option-chip">{{ option.label }}</div>
+                {% endfor %}
+              {% else %}
+                <p class="muted">No options available right now.</p>
+              {% endif %}
             </div>
           </section>
 
