@@ -64,7 +64,8 @@ for opp_type in OPPONENTS:
     qmix_match_wins = 0
     total_hands     = 0
     game_results    = []
-    hand_stats      = {'march': 0, 'win': 0, 'loss': 0, 'opp_march': 0}
+    hand_stats      = {'march': 0, 'win': 0, 'loss': 0, 'opp_march': 0,
+                       'qmix_euchre': 0, 'opp_euchre': 0}
 
     print(f"\n{'='*60}")
     print(f"Evaluating QMIX vs {opp_label}  ({NUM_GAMES} games, first to {WIN_TARGET} pts)")
@@ -96,10 +97,18 @@ for opp_type in OPPONENTS:
             payoffs   = env.game.get_payoffs()
             qmix_hand = payoffs.get(0, 0)
 
+            caller      = env.game.calling_player
+            maker_team  = {caller, (caller + 2) % 4}
+            was_euchred = (env.game.score[caller] + env.game.score[(caller + 2) % 4]) < 3
+
             if qmix_hand == 2:
                 qmix_score += 2
-                pts, winner = 2, 'QMIX (march!)'
-                hand_stats['march'] += 1
+                if was_euchred:  # QMIX defended and euchred the opponents
+                    pts, winner = 2, 'QMIX (euchre!)'
+                    hand_stats['qmix_euchre'] += 1
+                else:            # QMIX called trump and marched
+                    pts, winner = 2, 'QMIX (march!)'
+                    hand_stats['march'] += 1
             elif qmix_hand == 1:
                 qmix_score += 1
                 pts, winner = 1, 'QMIX'
@@ -108,10 +117,14 @@ for opp_type in OPPONENTS:
                 opp_score += 1
                 pts, winner = 1, 'OPP'
                 hand_stats['loss'] += 1
-            else:  # -2: opponents won all 5 tricks
+            else:  # -2
                 opp_score += 2
-                pts, winner = 2, 'OPP (march!)'
-                hand_stats['opp_march'] += 1
+                if was_euchred:  # OPP defended and euchred QMIX
+                    pts, winner = 2, 'OPP (euchre!)'
+                    hand_stats['opp_euchre'] += 1
+                else:            # OPP called trump and marched
+                    pts, winner = 2, 'OPP (march!)'
+                    hand_stats['opp_march'] += 1
 
             score_str = f"QMIX {qmix_score:>2} — {opp_score:<2} OPP"
             hands_this_game += 1
@@ -141,8 +154,10 @@ for opp_type in OPPONENTS:
     print(f"  Avg hands/game: {total_hands/NUM_GAMES:.1f}")
     print(f"  Hand outcomes : {total_hands} total hands")
     print(f"    QMIX march    : {h['march']:>5}  ({100*h['march']/total_hands:.1f}%)")
+    print(f"    QMIX euchre   : {h['qmix_euchre']:>5}  ({100*h['qmix_euchre']/total_hands:.1f}%)")
     print(f"    QMIX win      : {h['win']:>5}  ({100*h['win']/total_hands:.1f}%)")
     print(f"    OPP win       : {h['loss']:>5}  ({100*h['loss']/total_hands:.1f}%)")
+    print(f"    OPP euchre    : {h['opp_euchre']:>5}  ({100*h['opp_euchre']/total_hands:.1f}%)")
     print(f"    OPP march     : {h['opp_march']:>5}  ({100*h['opp_march']/total_hands:.1f}%)")
 
 # ── Bar chart ──────────────────────────────────────────────────────────────────
