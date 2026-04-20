@@ -42,7 +42,7 @@ EPSILON_STEPS = 15_000
 
 CKPT_PATH = os.path.join(os.path.dirname(__file__), 'dqn_euchre_shared.pt')
 
-RESUME = False  # set True to continue training from CKPT_PATH
+RESUME = True  # set True to continue training from CKPT_PATH
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
