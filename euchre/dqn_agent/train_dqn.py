@@ -30,19 +30,19 @@ from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 OBS_DIM    = 48
 ACTION_NUM = 54
 
-EPISODES          = 2_000_000
+EPISODES          = 300_000
 BATCH_SIZE        = 64
-MEMORY_SIZE       = 10_000
+MEMORY_SIZE       = 100_000
 WARMUP_EPISODES   = 500
 TARGET_SYNC_EVERY = 1_000
 EVAL_EVERY        = 50_000
 EVAL_GAMES        = 100
 
-LR            = 5e-4
+LR            = 1e-4
 GAMMA         = 0.99
 EPSILON_START = 1.0
 EPSILON_END   = 0.05
-EPSILON_STEPS = 150_000
+EPSILON_STEPS = 500_000
 
 CKPT_PATH = os.path.join(os.path.dirname(__file__), 'dqn_euchre.pt')
 
