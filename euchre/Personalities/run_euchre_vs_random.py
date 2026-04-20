@@ -15,7 +15,7 @@ import rlcard
 from rlcard.agents.dqn_agent_pytorch import DQNAgent
 from rlcard.agents.random_agent import RandomAgent
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
-from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
+from Personalities.train_qmix_personalities import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
 
 # ── CLI args ───────────────────────────────────────────────────────────────────
 
