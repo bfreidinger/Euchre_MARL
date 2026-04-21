@@ -40,6 +40,7 @@ class EuchreGame(object):
         self.game_over = False
         
         self.trump = None
+        self.calling_player = None
         self.lead_suit = None
         self.turned_down = None
         self.seen = np.zeros(24)
