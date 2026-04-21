@@ -28,7 +28,7 @@ import rlcard
 from rlcard.agents.dqn_agent_pytorch import DQNAgent, JointMemory
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 
-# ── Hyperparameters ────────────────────────────────────────────────────────────
+# Hyperparameters 
 
 OBS_DIM      = 48     # per-agent local observation (from EuchreEnv._extract_state)
 ACTION_NUM   = 54
@@ -51,7 +51,7 @@ EPSILON_END   = 0.05
 EPSILON_STEPS = 15_000_000
 
 
-# ── Mixing Network ─────────────────────────────────────────────────────────────
+# Mixing Network 
 
 class MixingNetwork(nn.Module):
     """Monotone mixing of individual Q-values conditioned on global state.
@@ -172,7 +172,7 @@ class QMIXSystem:
         nl2       = self._t(nl2)
         done      = self._t(done)            # (B,)  1.0 if terminal
 
-        # ── current Q_tot ─────────────────────────────────────────────────────
+        # ── current Q_tot 
         self.agent0.q_estimator.qnet.train()
         self.agent2.q_estimator.qnet.train()
         self.eval_mix_net.train()
