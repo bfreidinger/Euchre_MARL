@@ -18,11 +18,11 @@ from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-NUM_GAMES  = 500
+NUM_GAMES  = 1000
 SHOW_HANDS = True
 WIN_TARGET = 10
 
-DQN_CKPT_PATH = os.path.join(os.path.dirname(__file__), '..', 'dqn_agent', 'dqn_euchre.pt')
+DQN_CKPT_PATH = os.path.join(os.path.dirname(__file__), '..', 'dqn_agent', 'dqn_euchre_shared.pt')
 
 OPPONENTS = ['random', 'rule', 'dqn']
 
@@ -45,59 +45,18 @@ def make_opponents(opp_type):
     if opp_type == 'random':
         return RandomAgent(ACTION_NUM), RandomAgent(ACTION_NUM), 'Random'
     elif opp_type == 'dqn':
-        opp1 = DQNAgent(scope='agent0', action_num=ACTION_NUM,
-                        state_shape=[OBS_DIM], mlp_layers=[128, 128])
-        opp3 = DQNAgent(scope='agent2', action_num=ACTION_NUM,
-                        state_shape=[OBS_DIM], mlp_layers=[128, 128])
-        dqn_ckpt = torch.load(DQN_CKPT_PATH, map_location=opp1.device)
-        opp1.load(dqn_ckpt)
-        opp3.load(dqn_ckpt)
-        return opp1, opp3, 'DQN'
+        shared = DQNAgent(scope='shared', action_num=ACTION_NUM,
+                          state_shape=[OBS_DIM], mlp_layers=[128, 128])
+        dqn_ckpt = torch.load(DQN_CKPT_PATH, map_location=shared.device)
+        shared.load(dqn_ckpt)
+        return shared, shared, 'DQN'
     else:
         return EuchreRuleAgent(), EuchreRuleAgent(), 'Rule-Based'
 
 # ── Run all matchups ───────────────────────────────────────────────────────────
 
-all_results = {}  # opp_label -> np.array of 1/0 per game
-all_summary_rows = []
-
-
-def init_hand_stats():
-    return {
-        'match_wins': 0,
-        'match_losses': 0,
-        'total_hands': 0,
-        'hand_wins': 0,
-        'hand_losses': 0,
-        'qmix_marches': 0,
-        'qmix_got_marched': 0,
-        'qmix_called': 0,
-        'opp_called': 0,
-        'qmix_called_and_won': 0,
-        'qmix_called_and_lost': 0,
-        'opp_called_and_qmix_lost': 0,
-        'opp_called_and_marched': 0,
-    }
-
-
-def pct(count, total):
-    return 100.0 * count / total if total else 0.0
-
-
-def summarize_stats(opp_label, match_results, stats):
-    total_matches = len(match_results)
-    row = {
-        'Opponent': opp_label,
-        'Match Win %': pct(stats['match_wins'], total_matches),
-        'Hand Win %': pct(stats['hand_wins'], stats['total_hands']),
-        'QMIX Marched %': pct(stats['qmix_marches'], stats['total_hands']),
-        'Got Marched %': pct(stats['qmix_got_marched'], stats['total_hands']),
-        'QMIX Called Win %': pct(stats['qmix_called_and_won'], stats['total_hands']),
-        'QMIX Called Lost %': pct(stats['qmix_called_and_lost'], stats['total_hands']),
-        'Opp Called QMIX Loss %': pct(stats['opp_called_and_qmix_lost'], stats['total_hands']),
-        'Opp Called Marched %': pct(stats['opp_called_and_marched'], stats['total_hands']),
-    }
-    return row
+all_results   = {}   # opp_label -> np.array of 1/0 per game
+all_hand_stats = {}  # opp_label -> dict of hand outcome counts
 
 for opp_type in OPPONENTS:
     opp1, opp3, opp_label = make_opponents(opp_type)
@@ -106,7 +65,8 @@ for opp_type in OPPONENTS:
     qmix_match_wins = 0
     total_hands     = 0
     game_results    = []
-    hand_stats      = init_hand_stats()
+    hand_stats      = {'march': 0, 'win': 0, 'loss': 0, 'opp_march': 0,
+                       'qmix_euchre': 0, 'opp_euchre': 0}
 
     print(f"\n{'='*60}")
     print(f"Evaluating QMIX vs {opp_label}  ({NUM_GAMES} games, first to {WIN_TARGET} pts)")
@@ -144,33 +104,34 @@ for opp_type in OPPONENTS:
             qmix_hand = payoffs.get(0, 0)
             hand_stats['total_hands'] += 1
 
-            if qmix_hand > 0:
-                qmix_score += qmix_hand
-                pts       = qmix_hand
-                winner    = 'QMIX' + (' (march!)' if qmix_hand == 2 else '')
-                hand_stats['hand_wins'] += 1
-                if qmix_hand == 2:
-                    hand_stats['qmix_marches'] += 1
-            else:
-                opp_score += abs(qmix_hand)
-                pts       = abs(qmix_hand)
-                winner    = 'OPP ' + (' (march!)' if abs(qmix_hand) == 2 else '')
-                hand_stats['hand_losses'] += 1
-                if abs(qmix_hand) == 2:
-                    hand_stats['qmix_got_marched'] += 1
+            caller      = env.game.calling_player
+            maker_team  = {caller, (caller + 2) % 4}
+            was_euchred = (env.game.score[caller] + env.game.score[(caller + 2) % 4]) < 3
 
-            if trump_caller in (0, 2):
-                hand_stats['qmix_called'] += 1
-                if qmix_hand > 0:
-                    hand_stats['qmix_called_and_won'] += 1
-                else:
-                    hand_stats['qmix_called_and_lost'] += 1
-            elif trump_caller in (1, 3):
-                hand_stats['opp_called'] += 1
-                if qmix_hand < 0:
-                    hand_stats['opp_called_and_qmix_lost'] += 1
-                    if abs(qmix_hand) == 2:
-                        hand_stats['opp_called_and_marched'] += 1
+            if qmix_hand == 2:
+                qmix_score += 2
+                if was_euchred:  # QMIX defended and euchred the opponents
+                    pts, winner = 2, 'QMIX (euchre!)'
+                    hand_stats['qmix_euchre'] += 1
+                else:            # QMIX called trump and marched
+                    pts, winner = 2, 'QMIX (march!)'
+                    hand_stats['march'] += 1
+            elif qmix_hand == 1:
+                qmix_score += 1
+                pts, winner = 1, 'QMIX'
+                hand_stats['win'] += 1
+            elif qmix_hand == -1:
+                opp_score += 1
+                pts, winner = 1, 'OPP'
+                hand_stats['loss'] += 1
+            else:  # -2
+                opp_score += 2
+                if was_euchred:  # OPP defended and euchred QMIX
+                    pts, winner = 2, 'OPP (euchre!)'
+                    hand_stats['opp_euchre'] += 1
+                else:            # OPP called trump and marched
+                    pts, winner = 2, 'OPP (march!)'
+                    hand_stats['opp_march'] += 1
 
             score_str = f"QMIX {qmix_score:>2} — {opp_score:<2} OPP"
             hands_this_game += 1
@@ -191,51 +152,50 @@ for opp_type in OPPONENTS:
             game_results.append(0)
         total_hands += hands_this_game
 
+    all_results[opp_label]    = np.array(game_results)
+    all_hand_stats[opp_label] = hand_stats
+
+    wr = qmix_match_wins / NUM_GAMES
+    ci = 1.96 * np.sqrt(wr * (1 - wr) / NUM_GAMES)
+    h  = hand_stats
     print(f"\nResults vs {opp_label}:")
-    print(f"  QMIX: {qmix_match_wins}/{NUM_GAMES} ({100*qmix_match_wins/NUM_GAMES:.1f}%)")
-    print(f"  Avg hands per game: {total_hands/NUM_GAMES:.1f}")
-    print(f"  Hand win rate: {pct(hand_stats['hand_wins'], hand_stats['total_hands']):.1f}%")
-    print(f"  QMIX marched: {hand_stats['qmix_marches']} ({pct(hand_stats['qmix_marches'], hand_stats['total_hands']):.1f}%)")
-    print(f"  QMIX got marched: {hand_stats['qmix_got_marched']} ({pct(hand_stats['qmix_got_marched'], hand_stats['total_hands']):.1f}%)")
-    print(f"  QMIX called and won: {hand_stats['qmix_called_and_won']} "
-          f"({pct(hand_stats['qmix_called_and_won'], hand_stats['total_hands']):.1f}% of hands, "
-          f"{pct(hand_stats['qmix_called_and_won'], hand_stats['qmix_called']):.1f}% of QMIX calls)")
-    print(f"  QMIX called and lost: {hand_stats['qmix_called_and_lost']} "
-          f"({pct(hand_stats['qmix_called_and_lost'], hand_stats['total_hands']):.1f}% of hands, "
-          f"{pct(hand_stats['qmix_called_and_lost'], hand_stats['qmix_called']):.1f}% of QMIX calls)")
-    print(f"  Opp called and QMIX lost: {hand_stats['opp_called_and_qmix_lost']} "
-          f"({pct(hand_stats['opp_called_and_qmix_lost'], hand_stats['total_hands']):.1f}% of hands)")
-    print(f"  Opp called and marched: {hand_stats['opp_called_and_marched']} "
-          f"({pct(hand_stats['opp_called_and_marched'], hand_stats['total_hands']):.1f}% of hands)")
+    print(f"  Game win rate : {qmix_match_wins}/{NUM_GAMES}  ({100*wr:.1f}% ± {100*ci:.1f}%)")
+    print(f"  Avg hands/game: {total_hands/NUM_GAMES:.1f}")
+    print(f"  Hand outcomes : {total_hands} total hands")
+    print(f"    QMIX march    : {h['march']:>5}  ({100*h['march']/total_hands:.1f}%)")
+    print(f"    QMIX euchre   : {h['qmix_euchre']:>5}  ({100*h['qmix_euchre']/total_hands:.1f}%)")
+    print(f"    QMIX win      : {h['win']:>5}  ({100*h['win']/total_hands:.1f}%)")
+    print(f"    OPP win       : {h['loss']:>5}  ({100*h['loss']/total_hands:.1f}%)")
+    print(f"    OPP euchre    : {h['opp_euchre']:>5}  ({100*h['opp_euchre']/total_hands:.1f}%)")
+    print(f"    OPP march     : {h['opp_march']:>5}  ({100*h['opp_march']/total_hands:.1f}%)")
 
-    all_results[opp_label] = np.array(game_results)
-    all_summary_rows.append(summarize_stats(opp_label, game_results, hand_stats))
+# ── Bar chart ──────────────────────────────────────────────────────────────────
 
-# ── Win rate plot ───────────────────────────────────────────────────────────────
-
-WINDOW = max(1, NUM_GAMES // 10)
 COLORS = {'Random': '#2196f3', 'Rule-Based': '#e53935', 'DQN': '#43a047'}
 
-game_numbers = np.arange(1, NUM_GAMES + 1)
-rolling_x    = np.arange(WINDOW, NUM_GAMES + 1)
+labels     = list(all_results.keys())
+win_rates  = [all_results[l].mean() * 100 for l in labels]
+error_bars = [1.96 * np.sqrt((wr/100) * (1 - wr/100) / NUM_GAMES) * 100
+              for wr in win_rates]
+colors     = [COLORS[l] for l in labels]
 
-fig, ax = plt.subplots(figsize=(11, 5))
+fig, ax = plt.subplots(figsize=(8, 5))
 
-for opp_label, results in all_results.items():
-    rolling_wr = np.convolve(results, np.ones(WINDOW) / WINDOW, mode='valid')
-    final_wr   = results.mean() * 100
-    ax.plot(rolling_x, rolling_wr * 100,
-            color=COLORS[opp_label], linewidth=2.2,
-            label=f'vs {opp_label}  (final {final_wr:.1f}%)')
+bars = ax.bar(labels, win_rates, yerr=error_bars, capsize=6,
+              color=colors, alpha=0.85, width=0.5,
+              error_kw={'elinewidth': 1.8, 'ecolor': '#555555'})
 
 ax.axhline(50, color='#9e9e9e', linewidth=1.2, linestyle='--', label='50% baseline')
 
-ax.set_xlim(1, NUM_GAMES)
+for bar, wr in zip(bars, win_rates):
+    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2.5,
+            f'{wr:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
+
 ax.set_ylim(0, 100)
-ax.set_xlabel('Game', fontsize=12)
 ax.set_ylabel('Win Rate (%)', fontsize=12)
-ax.set_title(f'QMIX Win Rate vs All Opponents  ({NUM_GAMES} games, first to {WIN_TARGET} pts)',
-             fontsize=14, fontweight='bold', pad=12)
+ax.set_title(f'QMIX Win Rate vs All Opponents\n'
+             f'({NUM_GAMES} games, first to {WIN_TARGET} pts — 95% CI error bars)',
+             fontsize=13, fontweight='bold', pad=12)
 
 ax.legend(fontsize=10)
 ax.grid(axis='y', alpha=0.3)

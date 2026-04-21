@@ -51,15 +51,16 @@ class EuchreJudger(object):
         return [k for k, v in center_cards.items() if winning_card == v][0]
 
     def judge_hand(self, game):
-        team_1_score = game.score[0] + game.score[2]
-        if team_1_score == 5:
-            return [0,2], 2
-        elif team_1_score >= 3:
-            return [0,2], 1
-        elif team_1_score == 0:
-            return [1,3], 2
-        else:
-            return [1,3], 1
+        caller = game.calling_player
+        maker_team    = [caller, (caller + 2) % 4]
+        defender_team = [(caller + 1) % 4, (caller + 3) % 4]
+        maker_tricks  = game.score[maker_team[0]] + game.score[maker_team[1]]
+        if maker_tricks == 5:      # march
+            return maker_team, 2
+        elif maker_tricks >= 3:    # made it
+            return maker_team, 1
+        else:                      # euchred
+            return defender_team, 2
 
     def _get_player_order(self, leader):
         return [(i+leader)%4 for i in range(4)]

@@ -15,6 +15,7 @@ class EuchreGame(object):
         self.allow_step_back = allow_step_back
         self.num_players = 4
         self.payoffs = [0 for _ in range(self.num_players)]
+        self.dealer_player_id = None
 
     def init_game(self):
         self.payoffs = [0 for _ in range(self.num_players)]
@@ -22,7 +23,10 @@ class EuchreGame(object):
         self.judge = Judger()
 
         self.dealer = Dealer()
-        self.dealer_player_id = random.randrange(0, self.num_players)
+        if self.dealer_player_id is None:
+            self.dealer_player_id = random.randrange(0, self.num_players)
+        else:
+            self.dealer_player_id = (self.dealer_player_id + 1) % self.num_players
         self.players = [Player(i) for i in range(self.num_players)]
 
         for player in self.players:
@@ -142,6 +146,7 @@ class EuchreGame(object):
 
     def _perform_call(self, suit):
         self.trump = suit
+        self.calling_player = self.current_player
         self.current_player = self._increment_player(self.dealer_player_id)
 
     def _perform_pass(self):
