@@ -135,6 +135,32 @@ def action_kind(action):
     return "play"
 
 
+def suit_color(suit):
+    return "red" if suit in {"H", "D", "♥", "♦"} else "black"
+
+
+def action_visuals(action_text):
+    payload = {
+        "suit": "",
+        "suit_symbol": "",
+        "suit_color": "neutral",
+        "card": None,
+    }
+    kind = action_kind(action_text)
+    if kind in {"play", "discard"}:
+        card_code = action_text.split("-", 1)[1] if action_text.startswith("discard-") else action_text
+        payload["card"] = card_payload(card_code)
+        payload["suit"] = card_code[0]
+        payload["suit_symbol"] = SUIT_SYMBOLS.get(card_code[0], card_code[0])
+        payload["suit_color"] = suit_color(card_code[0])
+    elif action_text.startswith("call-"):
+        suit = action_text.split("-", 1)[1]
+        payload["suit"] = suit
+        payload["suit_symbol"] = SUIT_SYMBOLS.get(suit, suit)
+        payload["suit_color"] = suit_color(suit)
+    return payload
+
+
 def redirect(start_response, location):
     start_response("303 See Other", [("Location", location)])
     return [b""]
@@ -192,6 +218,10 @@ class MatchSession:
     last_move: dict | None = field(init=False, default=None)
     reveal_trick: list = field(init=False, default_factory=list)
     reveal_winner: int | None = field(init=False, default=None)
+    trump_caller: int | None = field(init=False, default=None)
+    trump_call_label: str = field(init=False, default="")
+    current_trick_actions: list = field(init=False, default_factory=list)
+    completed_tricks: list = field(init=False, default_factory=list)
 
     def __post_init__(self):
         if self.mode == "spectator":
@@ -210,6 +240,10 @@ class MatchSession:
         self.last_move = None
         self.reveal_trick = []
         self.reveal_winner = None
+        self.trump_caller = None
+        self.trump_call_label = ""
+        self.current_trick_actions = []
+        self.completed_tricks = []
         self.state, self.current_player = self.env.reset()
         self._update_turn_status()
 
@@ -227,18 +261,27 @@ class MatchSession:
     def _append_log(self, player_id, action_text):
         self.action_log.append(f"{PLAYER_NAMES[player_id]}: {format_action(action_text)}")
         self.animation_tick += 1
+        visuals = action_visuals(action_text)
         self.last_move = {
             "player_id": player_id,
             "player_name": PLAYER_NAMES[player_id],
             "raw": action_text,
             "label": format_action(action_text),
             "kind": action_kind(action_text),
-            "card": (
-                card_payload(action_text.split("-", 1)[1] if action_text.startswith("discard-") else action_text)
-                if action_kind(action_text) in {"play", "discard"}
-                else None
-            ),
+            "card": visuals["card"],
         }
+        if action_kind(action_text) == "play":
+            self.current_trick_actions.append(
+                {
+                    "player_id": player_id,
+                    "player_name": PLAYER_NAMES[player_id],
+                    "label": format_action(action_text),
+                    "card": visuals["card"],
+                }
+            )
+        if action_text == "pick" or action_text.startswith("call-"):
+            self.trump_caller = player_id
+            self.trump_call_label = format_action(action_text)
 
     def _capture_trick_reveal(self, acting_player, action_text):
         if action_kind(action_text) != "play":
@@ -286,6 +329,20 @@ class MatchSession:
             self.status = "Your turn."
         else:
             self.status = f"{PLAYER_NAMES[self.current_player]} is up next."
+
+    def _finalize_revealed_trick(self):
+        if not self.reveal_trick or self.reveal_winner is None:
+            return
+        winner_team = "You + Partner" if self.reveal_winner in {0, 2} else "Opponents"
+        summary = {
+            "winner_id": self.reveal_winner,
+            "winner_name": PLAYER_NAMES[self.reveal_winner],
+            "winner_team": winner_team,
+            "plays": list(self.reveal_trick),
+        }
+        self.completed_tricks.append(summary)
+        self.completed_tricks = self.completed_tricks[-5:]
+        self.current_trick_actions = []
 
     def play_human_action(self, action_id):
         if self.mode == "spectator":
@@ -339,6 +396,7 @@ class MatchSession:
 
     def _finalize_hand(self):
         self.hand_over = True
+        self._finalize_revealed_trick()
         payoffs = self.env.game.get_payoffs()
         human_team_points = max(payoffs.get(0, 0), 0)
         opp_team_points = max(-payoffs.get(0, 0), 0)
@@ -375,6 +433,7 @@ class MatchSession:
         self.start_hand()
 
     def _clear_reveal_if_present(self):
+        self._finalize_revealed_trick()
         self.reveal_trick = []
         self.reveal_winner = None
 
@@ -408,9 +467,7 @@ class MatchSession:
                     "label": format_action(action_text),
                     "raw": action_text,
                     "kind": action_kind(action_text),
-                    "card": card_payload(action_text.split("-", 1)[1] if action_text.startswith("discard-") else action_text)
-                    if action_kind(action_text) in {"play", "discard"}
-                    else None,
+                    **action_visuals(action_text),
                 }
                 legal_actions.append(item)
                 grouped_actions[item["kind"]].append(item)
@@ -497,8 +554,23 @@ class MatchSession:
                         "raw": action_text,
                         "label": format_action(action_text),
                         "kind": action_kind(action_text),
+                        **action_visuals(action_text),
                     }
                 )
+
+        visible_trick = []
+        if self.reveal_trick:
+            for play in self.reveal_trick:
+                visible_trick.append(
+                    {
+                        "player_name": play["owner"],
+                        "card": play["card"],
+                    }
+                )
+        else:
+            visible_trick = list(self.current_trick_actions)
+
+        recent_trick = self.completed_tricks[-1] if self.completed_tricks else None
 
         return {
             "policy_labels": POLICY_LABELS,
@@ -528,6 +600,8 @@ class MatchSession:
             "dealer": PLAYER_NAMES.get(self.env.game.dealer_player_id, "Unknown"),
             "dealer_id": self.env.game.dealer_player_id,
             "trump": format_card(f"{self.env.game.trump}9")[1:] if self.env.game.trump else "Not chosen",
+            "trump_caller": PLAYER_NAMES.get(self.trump_caller, "Not called yet") if self.trump_caller is not None else "Not called yet",
+            "trump_call_label": self.trump_call_label or "No trump call yet",
             "flipped": card_payload(self.env.game.flipped_card.get_index()) if self.env.game.flipped_card else None,
             "turned_down": (
                 SUIT_SYMBOLS.get(self.env.game.turned_down, self.env.game.turned_down)
@@ -546,6 +620,8 @@ class MatchSession:
             "grouped_actions": grouped_actions,
             "bidding_prompt": bidding_prompt,
             "current_options": current_options,
+            "current_trick_actions": visible_trick,
+            "recent_trick": recent_trick,
             "action_log": list(reversed(self.action_log[-16:])),
         }
 

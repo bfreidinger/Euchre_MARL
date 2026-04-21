@@ -94,6 +94,8 @@
               <div><span>Dealer</span><strong id="dealer-label">{{ dealer }}</strong></div>
               <div><span>Trump</span><strong id="trump-label">{{ trump }}</strong></div>
               <div><span>Tricks</span><strong id="tricks-label">{{ team_tricks }} - {{ opp_tricks }}</strong></div>
+              <div><span>Caller</span><strong id="trump-caller-label">{{ trump_caller }}</strong></div>
+              <div><span>Call</span><strong id="trump-call-action">{{ trump_call_label }}</strong></div>
             </div>
           </div>
 
@@ -285,10 +287,55 @@
             <div id="current-options" class="option-list">
               {% if current_options %}
                 {% for option in current_options %}
-                <div class="option-chip">{{ option.label }}</div>
+                <div class="option-chip {% if option.suit_color %}{{ option.suit_color }}{% endif %}">
+                  <span class="option-label">{{ option.label }}</span>
+                  {% if option.suit_symbol %}
+                  <span class="option-suit">{{ option.suit_symbol }}</span>
+                  {% endif %}
+                </div>
                 {% endfor %}
               {% else %}
                 <p class="muted">No options available right now.</p>
+              {% endif %}
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading compact">
+              <h2>Trick Board</h2>
+              <p>Cards played this trick and the latest completed trick result.</p>
+            </div>
+            <div class="trick-ledger" id="current-trick-ledger">
+              {% if current_trick_actions %}
+                {% for play in current_trick_actions %}
+                <div class="trick-row">
+                  <span class="trick-player">{{ play.player_name }}</span>
+                  <span class="trick-card {{ play.card.color }}">
+                    <span class="trick-rank">{{ play.card.rank }}</span>
+                    <span class="trick-suit">{{ play.card.suit }}</span>
+                  </span>
+                </div>
+                {% endfor %}
+              {% else %}
+                <p class="muted">No cards have been played in this trick yet.</p>
+              {% endif %}
+            </div>
+            <div class="recent-trick" id="recent-trick-panel">
+              {% if recent_trick %}
+              <p class="recent-trick-title">Last Trick: {{ recent_trick.winner_name }} won for {{ recent_trick.winner_team }}</p>
+              <div class="recent-trick-cards">
+                {% for play in recent_trick.plays %}
+                <div class="recent-trick-card">
+                  <span class="recent-trick-owner">{{ play.owner }}</span>
+                  <span class="trick-card {{ play.card.color }}">
+                    <span class="trick-rank">{{ play.card.rank }}</span>
+                    <span class="trick-suit">{{ play.card.suit }}</span>
+                  </span>
+                </div>
+                {% endfor %}
+              </div>
+              {% else %}
+              <p class="muted">The first completed trick will appear here.</p>
               {% endif %}
             </div>
           </section>

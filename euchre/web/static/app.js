@@ -311,8 +311,61 @@
       return;
     }
     wrap.innerHTML = options
-      .map((option) => `<div class="option-chip">${option.label}</div>`)
+      .map(
+        (option) => `
+          <div class="option-chip ${option.suit_color || ""}">
+            <span class="option-label">${option.label}</span>
+            ${option.suit_symbol ? `<span class="option-suit">${option.suit_symbol}</span>` : ""}
+          </div>
+        `
+      )
       .join("");
+  }
+
+  function renderTrickPanels() {
+    const currentTrickEl = document.getElementById("current-trick-ledger");
+    const recentTrickEl = document.getElementById("recent-trick-panel");
+    if (currentTrickEl) {
+      const plays = state.current_trick_actions || [];
+      currentTrickEl.innerHTML = plays.length
+        ? plays
+            .map(
+              (play) => `
+                <div class="trick-row">
+                  <span class="trick-player">${play.player_name}</span>
+                  <span class="trick-card ${play.card.color}">
+                    <span class="trick-rank">${play.card.rank}</span>
+                    <span class="trick-suit">${play.card.suit}</span>
+                  </span>
+                </div>
+              `
+            )
+            .join("")
+        : `<p class="muted">No cards have been played in this trick yet.</p>`;
+    }
+    if (recentTrickEl) {
+      const recent = state.recent_trick;
+      recentTrickEl.innerHTML = recent
+        ? `
+          <p class="recent-trick-title">Last Trick: ${recent.winner_name} won for ${recent.winner_team}</p>
+          <div class="recent-trick-cards">
+            ${recent.plays
+              .map(
+                (play) => `
+                  <div class="recent-trick-card">
+                    <span class="recent-trick-owner">${play.owner}</span>
+                    <span class="trick-card ${play.card.color}">
+                      <span class="trick-rank">${play.card.rank}</span>
+                      <span class="trick-suit">${play.card.suit}</span>
+                    </span>
+                  </div>
+                `
+              )
+              .join("")}
+          </div>
+        `
+        : `<p class="muted">The first completed trick will appear here.</p>`;
+    }
   }
 
   function renderLog() {
@@ -349,6 +402,8 @@
     updateText("table-status", state.status);
     updateText("dealer-label", state.dealer);
     updateText("trump-label", state.trump);
+    updateText("trump-caller-label", state.trump_caller);
+    updateText("trump-call-action", state.trump_call_label);
     updateText("tricks-label", `${state.team_tricks} - ${state.opp_tricks}`);
     updateText("current-player-label", state.current_player);
     updateText("turned-down-label", state.turned_down);
@@ -367,6 +422,7 @@
     renderHand();
     renderActions();
     renderCurrentOptions();
+    renderTrickPanels();
     renderLog();
 
     if (
