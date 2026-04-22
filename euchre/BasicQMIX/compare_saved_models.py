@@ -26,6 +26,7 @@ from rlcard.agents.dqn_agent_pytorch import DQNAgent
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 from rlcard.agents.random_agent import RandomAgent
 from rlcard.utils.euchre_utils import ACTION_LIST
+from bidding_observation import BASE_OBS_DIM, augment_state
 
 from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM
 
@@ -94,9 +95,9 @@ def make_opponents(opp_type, dqn_ckpt_path=None):
         if dqn_ckpt_path is None or not os.path.exists(dqn_ckpt_path):
             raise FileNotFoundError('DQN checkpoint not found for DQN opponents.')
         opp1 = DQNAgent(scope='agent0', action_num=ACTION_NUM,
-                        state_shape=[OBS_DIM], mlp_layers=[128, 128])
+                        state_shape=[BASE_OBS_DIM], mlp_layers=[128, 128])
         opp3 = DQNAgent(scope='agent2', action_num=ACTION_NUM,
-                        state_shape=[OBS_DIM], mlp_layers=[128, 128])
+                        state_shape=[BASE_OBS_DIM], mlp_layers=[128, 128])
         checkpoint = torch.load(dqn_ckpt_path, map_location=opp1.device)
         opp1.load(checkpoint)
         opp3.load(checkpoint)
@@ -106,20 +107,20 @@ def make_opponents(opp_type, dqn_ckpt_path=None):
 
 def build_team(spec):
     if spec['kind'] == 'baseline_random':
-        return RandomAgent(ACTION_NUM), RandomAgent(ACTION_NUM)
+        return RandomAgent(ACTION_NUM), RandomAgent(ACTION_NUM), False
 
     if spec['kind'] == 'baseline_rule':
-        return EuchreRuleAgent(), EuchreRuleAgent()
+        return EuchreRuleAgent(), EuchreRuleAgent(), False
 
     if spec['kind'] == 'dqn':
         agent0 = DQNAgent(scope='agent0', action_num=ACTION_NUM,
-                          state_shape=[OBS_DIM], mlp_layers=[128, 128])
+                          state_shape=[BASE_OBS_DIM], mlp_layers=[128, 128])
         agent2 = DQNAgent(scope='agent2', action_num=ACTION_NUM,
-                          state_shape=[OBS_DIM], mlp_layers=[128, 128])
+                          state_shape=[BASE_OBS_DIM], mlp_layers=[128, 128])
         checkpoint = torch.load(spec['path'], map_location=agent0.device)
         agent0.load(checkpoint)
         agent2.load(checkpoint)
-        return agent0, agent2
+        return agent0, agent2, False
 
     if spec['kind'] == 'qmix':
         agent0 = DQNAgent(scope='agent0', action_num=ACTION_NUM,
@@ -128,7 +129,7 @@ def build_team(spec):
                           state_shape=[OBS_DIM], mlp_layers=[128, 128])
         qmix = QMIXSystem(agent0, agent2)
         qmix.load(spec['path'])
-        return qmix.agent0, qmix.agent2
+        return qmix.agent0, qmix.agent2, True
 
     raise ValueError(f"Unknown model kind: {spec['kind']}")
 
@@ -151,7 +152,7 @@ def init_stats():
 
 
 def evaluate_team(env, spec, opp1, opp3, num_hands):
-    team0, team2 = build_team(spec)
+    team0, team2, use_augmented_obs = build_team(spec)
     env.set_agents([team0, opp1, team2, opp3])
     stats = init_stats()
 
@@ -161,9 +162,11 @@ def evaluate_team(env, spec, opp1, opp3, num_hands):
 
         while not env.is_over():
             if player_id == 0:
-                action, _ = team0.eval_step(state)
+                action_state = augment_state(env, state, 0) if use_augmented_obs else state
+                action, _ = team0.eval_step(action_state)
             elif player_id == 2:
-                action, _ = team2.eval_step(state)
+                action_state = augment_state(env, state, 2) if use_augmented_obs else state
+                action, _ = team2.eval_step(action_state)
             elif player_id == 1:
                 action, _ = opp1.eval_step(state)
             else:

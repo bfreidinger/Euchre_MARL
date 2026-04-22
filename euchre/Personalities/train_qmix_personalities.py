@@ -416,7 +416,7 @@ if __name__ == '__main__':
 
     # ── Choose personality here ──────────────────────────────────────────────
     # Change to 'timid' to train the timid agent
-    personality = 'agressive'
+    personality = 'aggressive'
 
     env = rlcard.make('euchre', config={'num_players': 4})
 

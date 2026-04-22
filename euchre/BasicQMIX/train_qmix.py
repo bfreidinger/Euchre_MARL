@@ -27,10 +27,10 @@ from copy import deepcopy
 import rlcard
 from rlcard.agents.dqn_agent_pytorch import DQNAgent, JointMemory
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
+from bidding_observation import OBS_DIM, augment_state
 
 # ── Hyperparameters ────────────────────────────────────────────────────────────
 
-OBS_DIM      = 48     # per-agent local observation (from EuchreEnv._extract_state)
 ACTION_NUM   = 54
 GLOBAL_DIM   = 127    # from EuchreEnv.get_global_state()
 MIX_EMBED    = 64     # mixing network hidden size
@@ -50,6 +50,97 @@ EPSILON_START = 1.0
 EPSILON_END   = 0.05
 # total_t ticks ~10x per episode; decay over first 30% of training ≈ 15M steps
 EPSILON_STEPS = 15_000_000
+
+
+def pct(count: int, total: int) -> float:
+    return 100.0 * count / total if total else 0.0
+
+
+def init_bidding_stats() -> dict:
+    return {
+        'hands': 0,
+        'qmix_called': 0,
+        'qmix_called_won': 0,
+        'qmix_called_euchred': 0,
+        'qmix_round1_calls': 0,
+        'qmix_round2_calls': 0,
+        'qmix_forced_dealer_calls': 0,
+        'opp_called': 0,
+        'opp_called_won': 0,
+        'opp_called_euchred': 0,
+        'opp_round1_calls': 0,
+        'opp_round2_calls': 0,
+        'opp_forced_dealer_calls': 0,
+        'all_calls': 0,
+        'all_round1_calls': 0,
+        'all_round2_calls': 0,
+        'all_forced_dealer_calls': 0,
+    }
+
+
+def record_call_event(stats: dict, caller: int, round_idx: int, forced_dealer_call: bool) -> None:
+    stats['all_calls'] += 1
+    if round_idx == 1:
+        stats['all_round1_calls'] += 1
+    else:
+        stats['all_round2_calls'] += 1
+    if forced_dealer_call:
+        stats['all_forced_dealer_calls'] += 1
+
+    if caller in (0, 2):
+        if round_idx == 1:
+            stats['qmix_round1_calls'] += 1
+        else:
+            stats['qmix_round2_calls'] += 1
+        if forced_dealer_call:
+            stats['qmix_forced_dealer_calls'] += 1
+    else:
+        if round_idx == 1:
+            stats['opp_round1_calls'] += 1
+        else:
+            stats['opp_round2_calls'] += 1
+        if forced_dealer_call:
+            stats['opp_forced_dealer_calls'] += 1
+
+
+def update_bidding_stats(stats: dict, game, payoff: float) -> None:
+    caller = getattr(game, 'calling_player', None)
+    if caller is None:
+        return
+
+    stats['hands'] += 1
+    if caller in (0, 2):
+        stats['qmix_called'] += 1
+        if payoff > 0:
+            stats['qmix_called_won'] += 1
+        else:
+            stats['qmix_called_euchred'] += 1
+    else:
+        stats['opp_called'] += 1
+        if payoff < 0:
+            stats['opp_called_won'] += 1
+        else:
+            stats['opp_called_euchred'] += 1
+
+
+def summarize_bidding_stats(stats: dict) -> dict:
+    return {
+        'qmix_call_rate': pct(stats['qmix_called'], stats['hands']),
+        'qmix_call_win_given_call': pct(stats['qmix_called_won'], stats['qmix_called']),
+        'qmix_call_euchred_given_call': pct(stats['qmix_called_euchred'], stats['qmix_called']),
+        'qmix_round1_call_pct': pct(stats['qmix_round1_calls'], stats['qmix_called']),
+        'qmix_round2_call_pct': pct(stats['qmix_round2_calls'], stats['qmix_called']),
+        'qmix_forced_dealer_calls': stats['qmix_forced_dealer_calls'],
+        'opp_call_rate': pct(stats['opp_called'], stats['hands']),
+        'opp_call_win_given_call': pct(stats['opp_called_won'], stats['opp_called']),
+        'opp_call_euchred_given_call': pct(stats['opp_called_euchred'], stats['opp_called']),
+        'opp_round1_call_pct': pct(stats['opp_round1_calls'], stats['opp_called']),
+        'opp_round2_call_pct': pct(stats['opp_round2_calls'], stats['opp_called']),
+        'opp_forced_dealer_calls': stats['opp_forced_dealer_calls'],
+        'all_round1_call_pct': pct(stats['all_round1_calls'], stats['all_calls']),
+        'all_round2_call_pct': pct(stats['all_round2_calls'], stats['all_calls']),
+        'all_forced_dealer_calls': stats['all_forced_dealer_calls'],
+    }
 
 
 # ── Mixing Network ─────────────────────────────────────────────────────────────
@@ -274,8 +365,8 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
         obs2, a2 = buf[2]
 
         # next local observations and legal masks for each agent
-        next_state0 = env._extract_state(game.get_state(0))
-        next_state2 = env._extract_state(game.get_state(2))
+        next_state0 = augment_state(env, env._extract_state(game.get_state(0)), 0)
+        next_state2 = augment_state(env, env._extract_state(game.get_state(2)), 2)
         next_obs0 = next_state0['obs']
         next_obs2 = next_state2['obs']
         # Terminal states have no legal actions — use all-ones (won't matter since done=True)
@@ -293,17 +384,19 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
 
         # ── action selection ──────────────────────────────────────────────────
         if player_id == 0:
-            action = qmix.agent0.step(state)
+            learner_state = augment_state(env, state, 0)
+            action = qmix.agent0.step(learner_state)
             qmix.agent0.total_t += 1      # drives epsilon decay
         elif player_id == 2:
-            action = qmix.agent2.step(state)
+            learner_state = augment_state(env, state, 2)
+            action = qmix.agent2.step(learner_state)
             qmix.agent2.total_t += 1
         else:
             action = opp_agents[player_id].step(state)
 
         # ── buffer team agent transitions ─────────────────────────────────────
         if player_id in (0, 2):
-            buf[player_id] = (state['obs'].copy(), action)
+            buf[player_id] = (learner_state['obs'].copy(), action)
 
         prev_center_len = len(game.center)
         next_state, next_player_id = env.step(action)
@@ -334,7 +427,8 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
 # ── Evaluation ─────────────────────────────────────────────────────────────────
 
 def evaluate(env, qmix: QMIXSystem, opp_agents: dict,
-             n_games: int = EVAL_GAMES) -> tuple[float, float]:
+             n_games: int = EVAL_GAMES,
+             return_bidding_stats: bool = False) -> tuple[float, float] | tuple[float, float, dict]:
     """
     Greedy evaluation (no exploration).
 
@@ -344,24 +438,39 @@ def evaluate(env, qmix: QMIXSystem, opp_agents: dict,
     """
     wins   = 0
     total  = 0.0
+    bidding_stats = init_bidding_stats()
 
     for _ in range(n_games):
         state, player_id = env.reset()
         while not env.is_over():
+            action_state = state
             if player_id == 0:
-                action, _ = qmix.agent0.eval_step(state)
+                action, _ = qmix.agent0.eval_step(augment_state(env, state, 0))
             elif player_id == 2:
-                action, _ = qmix.agent2.eval_step(state)
+                action, _ = qmix.agent2.eval_step(augment_state(env, state, 2))
             else:
                 action, _ = opp_agents[player_id].eval_step(state)
+
+            action_name = env.actions[action]
+            if action_name == 'pick' or action_name.startswith('call-'):
+                round_idx = 1 if action_state.get('flipped') is not None else 2
+                forced_dealer_call = (
+                    round_idx == 2 and
+                    player_id == env.game.dealer_player_id and
+                    'pass' not in action_state.get('raw_legal_actions', [])
+                )
+                record_call_event(bidding_stats, player_id, round_idx, forced_dealer_call)
             state, player_id = env.step(action)
 
         payoffs = env.game.get_payoffs()
         p = payoffs.get(0, 0)
         total += p
+        update_bidding_stats(bidding_stats, env.game, p)
         if p > 0:
             wins += 1
 
+    if return_bidding_stats:
+        return wins / n_games, total / n_games, summarize_bidding_stats(bidding_stats)
     return wins / n_games, total / n_games
 
 
@@ -437,19 +546,78 @@ if __name__ == '__main__':
 
         # evaluation checkpoint
         if ep % EVAL_EVERY == 0:
-            win_rate, avg_payoff = evaluate(env, qmix, opp_agents)
+            win_rate, avg_payoff, bidding = evaluate(
+                env, qmix, opp_agents, return_bidding_stats=True
+            )
             avg_loss = np.mean(recent_losses[-EVAL_EVERY:]) if recent_losses else float('nan')
             eps0 = qmix.agent0.epsilons[min(qmix.agent0.total_t, EPSILON_STEPS - 1)]
             print(f"{ep:>8}  {avg_loss:>9.4f}  {win_rate*100:>7.1f}%  {avg_payoff:>+10.3f}"
                   f"   ε={eps0:.3f}")
+            print(
+                " " * 10 +
+                f"All calls round1 {bidding['all_round1_call_pct']:.1f}% | "
+                f"round2 {bidding['all_round2_call_pct']:.1f}% | "
+                f"forced dealer calls {bidding['all_forced_dealer_calls']}"
+            )
+            print(
+                " " * 10 +
+                f"QMIX calls {bidding['qmix_call_rate']:.1f}% | "
+                f"win on call {bidding['qmix_call_win_given_call']:.1f}% | "
+                f"euchred on call {bidding['qmix_call_euchred_given_call']:.1f}%"
+            )
+            print(
+                " " * 10 +
+                f"QMIX round1 {bidding['qmix_round1_call_pct']:.1f}% | "
+                f"round2 {bidding['qmix_round2_call_pct']:.1f}% | "
+                f"forced dealer calls {bidding['qmix_forced_dealer_calls']}"
+            )
+            print(
+                " " * 10 +
+                f"OPP calls {bidding['opp_call_rate']:.1f}% | "
+                f"win on call {bidding['opp_call_win_given_call']:.1f}% | "
+                f"euchred on call {bidding['opp_call_euchred_given_call']:.1f}%"
+            )
+            print(
+                " " * 10 +
+                f"OPP round1 {bidding['opp_round1_call_pct']:.1f}% | "
+                f"round2 {bidding['opp_round2_call_pct']:.1f}% | "
+                f"forced dealer calls {bidding['opp_forced_dealer_calls']}"
+            )
             eval_episodes.append(ep)
             eval_win_rates.append(win_rate * 100)
             eval_avg_payoffs.append(avg_payoff)
 
     # ── final evaluation ──────────────────────────────────────────────────────
     print("=" * 60)
-    win_rate, avg_payoff = evaluate(env, qmix, opp_agents, n_games=2000)
-    print(f"Final (1000 games):  win={win_rate*100:.1f}%  avg_payoff={avg_payoff:+.3f}")
+    win_rate, avg_payoff, bidding = evaluate(
+        env, qmix, opp_agents, n_games=2000, return_bidding_stats=True
+    )
+    print(f"Final (2000 games):  win={win_rate*100:.1f}%  avg_payoff={avg_payoff:+.3f}")
+    print(
+        f"  All calls round1 {bidding['all_round1_call_pct']:.1f}% | "
+        f"round2 {bidding['all_round2_call_pct']:.1f}% | "
+        f"forced dealer calls {bidding['all_forced_dealer_calls']}"
+    )
+    print(
+        f"  QMIX calls {bidding['qmix_call_rate']:.1f}% | "
+        f"win on call {bidding['qmix_call_win_given_call']:.1f}% | "
+        f"euchred on call {bidding['qmix_call_euchred_given_call']:.1f}%"
+    )
+    print(
+        f"  QMIX round1 {bidding['qmix_round1_call_pct']:.1f}% | "
+        f"round2 {bidding['qmix_round2_call_pct']:.1f}% | "
+        f"forced dealer calls {bidding['qmix_forced_dealer_calls']}"
+    )
+    print(
+        f"  OPP calls  {bidding['opp_call_rate']:.1f}% | "
+        f"win on call {bidding['opp_call_win_given_call']:.1f}% | "
+        f"euchred on call {bidding['opp_call_euchred_given_call']:.1f}%"
+    )
+    print(
+        f"  OPP round1 {bidding['opp_round1_call_pct']:.1f}% | "
+        f"round2 {bidding['opp_round2_call_pct']:.1f}% | "
+        f"forced dealer calls {bidding['opp_forced_dealer_calls']}"
+    )
 
     qmix.save(os.path.join(os.path.dirname(__file__), 'qmix_euchre.pt'))
 

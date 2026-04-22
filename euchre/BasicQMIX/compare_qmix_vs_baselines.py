@@ -29,6 +29,7 @@ from rlcard.agents.dqn_agent_pytorch import DQNAgent
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 from rlcard.agents.random_agent import RandomAgent
 from rlcard.utils.euchre_utils import ACTION_LIST
+from bidding_observation import BASE_OBS_DIM, augment_state
 
 from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM
 
@@ -59,9 +60,9 @@ def make_opponents(opp_type, dqn_ckpt_path=None):
         if dqn_ckpt_path is None or not os.path.exists(dqn_ckpt_path):
             raise FileNotFoundError('DQN checkpoint not found for DQN opponents.')
         opp1 = DQNAgent(scope='agent0', action_num=ACTION_NUM,
-                        state_shape=[OBS_DIM], mlp_layers=[128, 128])
+                        state_shape=[BASE_OBS_DIM], mlp_layers=[128, 128])
         opp3 = DQNAgent(scope='agent2', action_num=ACTION_NUM,
-                        state_shape=[OBS_DIM], mlp_layers=[128, 128])
+                        state_shape=[BASE_OBS_DIM], mlp_layers=[128, 128])
         checkpoint = torch.load(dqn_ckpt_path, map_location=opp1.device)
         opp1.load(checkpoint)
         opp3.load(checkpoint)
@@ -108,9 +109,9 @@ def evaluate_matchup(env, qmix_path, opp_type, num_hands, dqn_ckpt_path):
 
         while not env.is_over():
             if player_id == 0:
-                action, _ = team0.eval_step(state)
+                action, _ = team0.eval_step(augment_state(env, state, 0))
             elif player_id == 2:
-                action, _ = team2.eval_step(state)
+                action, _ = team2.eval_step(augment_state(env, state, 2))
             elif player_id == 1:
                 action, _ = opp1.eval_step(state)
             else:

@@ -290,12 +290,12 @@ button.wide {
 
 .table-center {
   position: absolute;
-  inset: 118px 140px 132px;
+  inset: 220px 140px 132px;
 }
 
 .flipped-wrapper {
   position: absolute;
-  top: -26px;
+  top: -12px;
   left: 50%;
   transform: translateX(-50%);
   text-align: center;
@@ -310,7 +310,7 @@ button.wide {
 
 .trick-area {
   position: absolute;
-  inset: 112px 18px 0;
+  inset: 138px 18px 0;
 }
 
 .trick-slot {
@@ -780,7 +780,7 @@ button.wide {
   }
 
   .table-center {
-    inset: 148px 34px 160px;
+    inset: 246px 34px 160px;
   }
 
   .seat-west,

@@ -14,6 +14,7 @@ from rlcard.agents.dqn_agent_pytorch import DQNAgent
 from rlcard.agents.random_agent import RandomAgent
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 from rlcard.utils.euchre_utils import ACTION_LIST
+from bidding_observation import BASE_OBS_DIM, augment_state
 from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ def make_opponents(opp_type):
         return RandomAgent(ACTION_NUM), RandomAgent(ACTION_NUM), 'Random'
     elif opp_type == 'dqn':
         shared = DQNAgent(scope='shared', action_num=ACTION_NUM,
-                          state_shape=[OBS_DIM], mlp_layers=[128, 128])
+                          state_shape=[BASE_OBS_DIM], mlp_layers=[128, 128])
         dqn_ckpt = torch.load(DQN_CKPT_PATH, map_location=shared.device)
         shared.load(dqn_ckpt)
         return shared, shared, 'DQN'
@@ -87,9 +88,9 @@ for opp_type in OPPONENTS:
 
             while not env.is_over():
                 if player_id == 0:
-                    action, _ = qmix.agent0.eval_step(state)
+                    action, _ = qmix.agent0.eval_step(augment_state(env, state, 0))
                 elif player_id == 2:
-                    action, _ = qmix.agent2.eval_step(state)
+                    action, _ = qmix.agent2.eval_step(augment_state(env, state, 2))
                 elif player_id == 1:
                     action, _ = opp1.eval_step(state)
                 else:

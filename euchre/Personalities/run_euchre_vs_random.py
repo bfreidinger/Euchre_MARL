@@ -43,7 +43,7 @@ agent2 = DQNAgent(
 )
 
 qmix = QMIXSystem(agent0, agent2)
-ckpt_path = os.path.join(os.path.dirname(__file__), 'qmix_euchre.pt')
+ckpt_path = os.path.join(os.path.dirname(__file__), 'qmix_aggressive.pt')
 qmix.load(ckpt_path)
 
 if args.opponent == 'random':

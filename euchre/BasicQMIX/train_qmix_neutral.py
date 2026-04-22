@@ -20,11 +20,11 @@ import numpy as np
 import rlcard
 from rlcard.agents.dqn_agent_pytorch import DQNAgent, JointMemory
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
+from bidding_observation import OBS_DIM, augment_state
 from train_qmix import QMIXSystem, evaluate
 
 # ── Hyperparameters ────────────────────────────────────────────────────────────
 
-OBS_DIM      = 48
 ACTION_NUM   = 54
 GLOBAL_DIM   = 127
 MIX_EMBED    = 64
@@ -82,8 +82,8 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
         obs0, a0 = buf[0]
         obs2, a2 = buf[2]
 
-        next_state0 = env._extract_state(game.get_state(0))
-        next_state2 = env._extract_state(game.get_state(2))
+        next_state0 = augment_state(env, env._extract_state(game.get_state(0)), 0)
+        next_state2 = augment_state(env, env._extract_state(game.get_state(2)), 2)
         next_obs0 = next_state0['obs']
         next_obs2 = next_state2['obs']
         next_legal0 = _legal_mask(next_state0) if not done else np.ones(ACTION_NUM, dtype=np.float32)
@@ -100,17 +100,19 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
 
         # ── action selection ──────────────────────────────────────────────────
         if player_id == 0:
-            action = qmix.agent0.step(state)
+            learner_state = augment_state(env, state, 0)
+            action = qmix.agent0.step(learner_state)
             qmix.agent0.total_t += 1
         elif player_id == 2:
-            action = qmix.agent2.step(state)
+            learner_state = augment_state(env, state, 2)
+            action = qmix.agent2.step(learner_state)
             qmix.agent2.total_t += 1
         else:
             action = opp_agents[player_id].step(state)
 
         # ── buffer team agent transitions (no shaping) ────────────────────────
         if player_id in (0, 2):
-            buf[player_id] = (state['obs'].copy(), action)
+            buf[player_id] = (learner_state['obs'].copy(), action)
 
         prev_center_len = len(game.center)
         next_state, next_player_id = env.step(action)
