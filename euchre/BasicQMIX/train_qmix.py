@@ -35,14 +35,14 @@ ACTION_NUM   = 54
 GLOBAL_DIM   = 127    # from EuchreEnv.get_global_state()
 MIX_EMBED    = 64     # mixing network hidden size
 
-EPISODES          = 5000
-BATCH_SIZE        = 32
-MEMORY_SIZE       = 5_000
-WARMUP_EPISODES   = 50
+EPISODES          = 5_000_000
+BATCH_SIZE        = 64
+MEMORY_SIZE       = 500_000
+WARMUP_EPISODES   = 50_000
 TRAIN_EVERY       = 1
-TARGET_SYNC_FREQ  = 100
-EVAL_EVERY        = 100
-EVAL_GAMES        = 20
+TARGET_SYNC_FREQ  = 10_000
+EVAL_EVERY        = 100_000
+EVAL_GAMES        = 500
 
 GAMMA         = 0.99
 LR            = 5e-4
@@ -64,13 +64,13 @@ class MixingNetwork(nn.Module):
         super().__init__()
         self.n_agents = n_agents
 
-        # Hypernetwork → mixing weights (abs enforces monotonicity)
+        # Hypernetwork -> mixing weights (abs enforces monotonicity)
         self.hyper_w = nn.Sequential(
             nn.Linear(global_dim, embed_dim),
             nn.ReLU(),
             nn.Linear(embed_dim, n_agents),
         )
-        # Hypernetwork → bias (unconstrained)
+        # Hypernetwork -> bias (unconstrained)
         self.hyper_b = nn.Sequential(
             nn.Linear(global_dim, embed_dim),
             nn.ReLU(),
@@ -165,25 +165,25 @@ class QMIXSystem:
         a2        = self._t(a2, torch.long)
         next_obs1 = self._t(next_obs1)
         next_obs2 = self._t(next_obs2)
-        reward    = self._t(reward)          # (B,)
+        reward    = self._t(reward)          
         gs        = self._t(gs)
         next_gs   = self._t(next_gs)
-        nl1       = self._t(nl1)             # (B, 54) legal action masks
+        nl1       = self._t(nl1)             
         nl2       = self._t(nl2)
-        done      = self._t(done)            # (B,)  1.0 if terminal
+        done      = self._t(done)         
 
         # ── current Q_tot 
         self.agent0.q_estimator.qnet.train()
         self.agent2.q_estimator.qnet.train()
         self.eval_mix_net.train()
 
-        q0_all = self.agent0.q_estimator.qnet(obs1)           # (B, 54)
+        q0_all = self.agent0.q_estimator.qnet(obs1)          
         q2_all = self.agent2.q_estimator.qnet(obs2)
-        q0 = q0_all.gather(1, a1.unsqueeze(1)).squeeze(1)     # (B,)
+        q0 = q0_all.gather(1, a1.unsqueeze(1)).squeeze(1)    
         q2 = q2_all.gather(1, a2.unsqueeze(1)).squeeze(1)
 
-        chosen_action_qvals = torch.stack([q0, q2], dim=1)              # (B, 2)
-        q_total_eval        = self.eval_mix_net(chosen_action_qvals, gs) # (B, 1)
+        chosen_action_qvals = torch.stack([q0, q2], dim=1)           
+        q_total_eval        = self.eval_mix_net(chosen_action_qvals, gs) 
 
         # target Q_tot (Double-DQN style) 
         with torch.no_grad():
@@ -441,7 +441,7 @@ if __name__ == '__main__':
     print(f"Final (1000 games):  win={win_rate*100:.1f}%  avg_payoff={avg_payoff:+.3f}")
 
     # save weights of nns to file
-    # qmix.save(os.path.join(os.path.dirname(__file__), 'qmix_euchre.pt'))
+    qmix.save(os.path.join(os.path.dirname(__file__), 'qmix_euchre.pt'))
 
     # plot learning curves 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
@@ -462,7 +462,7 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     # plot and save plot to a file
-    # plot_path = os.path.join(os.path.dirname(__file__), 'qmix_learning_curve.png')
-    # plt.savefig(plot_path, dpi=150)
-    # print(f"Learning curve saved to {plot_path}")
+    plot_path = os.path.join(os.path.dirname(__file__), 'qmix_learning_curve.png')
+    plt.savefig(plot_path, dpi=150)
+    print(f"Learning curve saved to {plot_path}")
     plt.show()

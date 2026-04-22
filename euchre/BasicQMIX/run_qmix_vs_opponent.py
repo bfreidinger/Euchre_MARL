@@ -15,7 +15,7 @@ from rlcard.agents.random_agent import RandomAgent
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
 
-# ── Configuration ──────────────────────────────────────────────────────────────
+# Configuration 
 
 NUM_GAMES  = 1000
 SHOW_HANDS = True
@@ -25,7 +25,7 @@ DQN_CKPT_PATH = os.path.join(os.path.dirname(__file__), '..', 'dqn_agent', 'dqn_
 
 OPPONENTS = ['random', 'rule', 'dqn']
 
-# ── Build QMIX once ────────────────────────────────────────────────────────────
+# Build QMIX once 
 
 agent0 = DQNAgent(scope='agent0', action_num=ACTION_NUM,
                   state_shape=[OBS_DIM], mlp_layers=[128, 128])
@@ -38,7 +38,7 @@ qmix.load(ckpt_path)
 
 env = rlcard.make('euchre', config={'num_players': 4})
 
-# ── Helper: build opponent agents ──────────────────────────────────────────────
+# Helper: build opponent agents 
 
 def make_opponents(opp_type):
     if opp_type == 'random':
@@ -52,7 +52,7 @@ def make_opponents(opp_type):
     else:
         return EuchreRuleAgent(), EuchreRuleAgent(), 'Rule-Based'
 
-# ── Run all matchups ───────────────────────────────────────────────────────────
+# Run all matchups 
 
 all_results   = {}   # opp_label -> np.array of 1/0 per game
 all_hand_stats = {}  # opp_label -> dict of hand outcome counts
@@ -160,7 +160,7 @@ for opp_type in OPPONENTS:
     print(f"    OPP euchre    : {h['opp_euchre']:>5}  ({100*h['opp_euchre']/total_hands:.1f}%)")
     print(f"    OPP march     : {h['opp_march']:>5}  ({100*h['opp_march']/total_hands:.1f}%)")
 
-# ── Bar chart ──────────────────────────────────────────────────────────────────
+# Bar chart
 
 COLORS = {'Random': '#2196f3', 'Rule-Based': '#e53935', 'DQN': '#43a047'}
 
