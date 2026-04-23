@@ -35,13 +35,13 @@ ACTION_NUM   = 54
 GLOBAL_DIM   = 127    # from EuchreEnv.get_global_state()
 MIX_EMBED    = 64     # mixing network hidden size
 
-EPISODES          = 5_000_000
+EPISODES          = 100_000
 BATCH_SIZE        = 64
-MEMORY_SIZE       = 500_000   # ~100k episodes of experience; good diversity at 5M scale
-WARMUP_EPISODES   = 50_000    # ~1% of training before any gradients
+MEMORY_SIZE       = 20_000   # ~100k episodes of experience; good diversity at 5M scale
+WARMUP_EPISODES   = 2_000    # ~1% of training before any gradients
 TRAIN_EVERY       = 1
-TARGET_SYNC_EVERY = 10_000    # hard sync every 10k episodes (~100k gradient steps)
-EVAL_EVERY        = 100_000   # 50 checkpoints over full run
+TARGET_SYNC_EVERY = 1_000    # hard sync every 10k episodes (~100k gradient steps)
+EVAL_EVERY        = 10_000   # 50 checkpoints over full run
 EVAL_GAMES        = 500       # tighter win-rate estimates at each checkpoint
 
 GAMMA        = 0.99
@@ -49,7 +49,7 @@ LR           = 5e-4
 EPSILON_START = 1.0
 EPSILON_END   = 0.05
 # total_t ticks ~10x per episode; decay over first 30% of training ≈ 15M steps
-EPSILON_STEPS = 15_000_000
+EPSILON_STEPS = 150_000
 
 
 def pct(count: int, total: int) -> float:
@@ -325,6 +325,56 @@ class QMIXSystem:
         return loss.item()
 
 
+def pretrain_bidding(env, agent0: DQNAgent, agent2: DQNAgent,
+                     n_games: int = 10_000,
+                     epochs: int = 5,
+                     batch_size: int = 256,
+                     lr: float = 1e-3) -> None:
+    # behavioral cloning on bidding phase: train Q-nets to match rule agent choices
+    rule = EuchreRuleAgent()
+    data: dict[int, list] = {0: [], 2: []}
+
+    for _ in range(n_games):
+        state, player_id = env.reset()
+        while not env.is_over():
+            if env.game.trump is None and player_id in (0, 2):
+                aug = augment_state(env, state, player_id)
+                rule_action = rule.step(state)
+                data[player_id].append((aug['obs'].copy(), rule_action))
+            state, player_id = env.step(rule.step(state))
+
+    device = agent0.device
+    for agent, pid in [(agent0, 0), (agent2, 2)]:
+        samples = data[pid]
+        if not samples:
+            continue
+        obs_t = torch.tensor(np.array([x[0] for x in samples]),
+                             dtype=torch.float32, device=device)
+        act_t = torch.tensor([x[1] for x in samples],
+                             dtype=torch.long, device=device)
+
+        opt = torch.optim.Adam(agent.q_estimator.qnet.parameters(), lr=lr)
+        n = len(samples)
+        for epoch in range(epochs):
+            perm = torch.randperm(n, device=device)
+            total_loss, steps = 0.0, 0
+            for i in range(0, n, batch_size):
+                idx = perm[i:i + batch_size]
+                logits = agent.q_estimator.qnet(obs_t[idx])
+                loss = F.cross_entropy(logits, act_t[idx])
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                total_loss += loss.item()
+                steps += 1
+            print(f"  [pretrain agent{pid}] epoch {epoch+1}/{epochs}  "
+                  f"loss={total_loss/steps:.4f}  n={n}")
+
+        agent.target_estimator = deepcopy(agent.q_estimator)
+
+    print("Bidding pre-training complete.")
+
+
 # ── Episode Runner ─────────────────────────────────────────────────────────────
 
 def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
@@ -407,15 +457,14 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
 
         # ── flush joint transition ────────────────────────────────────────────
         if hand_ended:
-            payoffs = game.get_payoffs()
-            flush(payoffs.get(0, 0), done=True)
+            flush(game.get_payoffs().get(0, 0), done=True)
         elif trick_ended:
-            new_tricks  = game.score[0] + game.score[2]
-            trick_r     = (new_tricks - prev_team_tricks) * 0.25
+            new_tricks = game.score[0] + game.score[2]
+            delta_team = new_tricks - prev_team_tricks   # 1 if QMIX won, 0 if opp won
+            trick_r    = 0.25 if delta_team == 1 else -0.25
             prev_team_tricks = new_tricks
             flush(trick_r)
         elif 0 in buf and 2 in buf and len(game.center) == 0:
-            # Both acted during bidding (center is always empty outside of tricks)
             flush(0.0)
 
         state     = next_state
@@ -515,6 +564,10 @@ if __name__ == '__main__':
 
     # set_agents so env knows about agents (needed for allow_raw_data detection)
     env.set_agents([agent0, opp_agents[1], agent2, opp_agents[3]])
+
+    # pre-train bidding policy to match rule agent before RL training
+    # print("Pre-training bidding policy from rule agent...")
+    # pretrain_bidding(env, agent0, agent2)
 
     # ── training ──────────────────────────────────────────────────────────────
     print("=" * 60)

@@ -19,7 +19,7 @@ from train_qmix import QMIXSystem, OBS_DIM, ACTION_NUM, MIX_EMBED
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-NUM_GAMES  = 1000
+NUM_GAMES  = 500
 SHOW_HANDS = True
 WIN_TARGET = 10
 
