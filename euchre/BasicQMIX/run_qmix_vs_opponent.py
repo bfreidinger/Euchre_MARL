@@ -67,7 +67,8 @@ for opp_type in OPPONENTS:
     total_hands     = 0
     game_results    = []
     hand_stats      = {'march': 0, 'win': 0, 'loss': 0, 'opp_march': 0,
-                       'qmix_euchre': 0, 'opp_euchre': 0}
+                       'qmix_euchre': 0, 'opp_euchre': 0,
+                       'total_hands': 0, 'match_wins': 0, 'match_losses': 0}
 
     print(f"\n{'='*60}")
     print(f"Evaluating QMIX vs {opp_label}  ({NUM_GAMES} games, first to {WIN_TARGET} pts)")
@@ -208,6 +209,23 @@ out_path = os.path.join(os.path.dirname(__file__), 'qmix_vs_all_winrate.png')
 plt.savefig(out_path, dpi=150, bbox_inches='tight')
 print(f"\nWin rate graph saved to: {out_path}")
 plt.show()
+
+# ── Build summary rows ────────────────────────────────────────────────────────
+
+all_summary_rows = []
+for label, h in all_hand_stats.items():
+    t = h['total_hands']
+    all_summary_rows.append({
+        'Opponent':               label,
+        'Match Win %':            all_results[label].mean() * 100,
+        'Hand Win %':             (h['march'] + h['win'] + h['qmix_euchre']) / t * 100,
+        'QMIX Marched %':         h['march'] / t * 100,
+        'Got Marched %':          h['opp_march'] / t * 100,
+        'QMIX Called Win %':      (h['march'] + h['win']) / t * 100,
+        'QMIX Called Lost %':     h['opp_euchre'] / t * 100,
+        'Opp Called QMIX Loss %': h['loss'] / t * 100,
+        'Opp Called Marched %':   h['opp_march'] / t * 100,
+    })
 
 # ── Summary table for presentation ────────────────────────────────────────────
 

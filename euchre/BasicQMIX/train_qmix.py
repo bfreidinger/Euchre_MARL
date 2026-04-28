@@ -35,21 +35,20 @@ ACTION_NUM   = 54
 GLOBAL_DIM   = 127    # from EuchreEnv.get_global_state()
 MIX_EMBED    = 64     # mixing network hidden size
 
-EPISODES          = 100_000
+EPISODES          = 3_000_000
 BATCH_SIZE        = 64
-MEMORY_SIZE       = 20_000   # ~100k episodes of experience; good diversity at 5M scale
-WARMUP_EPISODES   = 2_000    # ~1% of training before any gradients
+MEMORY_SIZE       = 500_000  # ~167k episodes of experience
+WARMUP_EPISODES   = 50_000   # ~1.7% of training before any gradients
 TRAIN_EVERY       = 1
-TARGET_SYNC_EVERY = 1_000    # hard sync every 10k episodes (~100k gradient steps)
-EVAL_EVERY        = 10_000   # 50 checkpoints over full run
-EVAL_GAMES        = 500       # tighter win-rate estimates at each checkpoint
+TARGET_SYNC_EVERY = 10_000   # hard sync every 10k episodes
+EVAL_EVERY        = 100_000  # 30 checkpoints over full run
+EVAL_GAMES        = 500      # win-rate estimates at each checkpoint
 
 GAMMA        = 0.99
 LR           = 5e-4
 EPSILON_START = 1.0
 EPSILON_END   = 0.05
-# total_t ticks ~10x per episode; decay over first 30% of training ≈ 15M steps
-EPSILON_STEPS = 150_000
+EPSILON_STEPS = 15_000_000
 
 
 def pct(count: int, total: int) -> float:
