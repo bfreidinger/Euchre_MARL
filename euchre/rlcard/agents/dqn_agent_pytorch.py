@@ -222,6 +222,25 @@ class DQNAgent(object):
         '''
         A = self.predict(state['obs'])
         A = remove_illegal(A, state['legal_actions'])
+
+        # During bidding, bias random exploration toward pass (action 0).
+        # Without this, uniform random exploration calls trump ~80% of warmup
+        # hands, poisoning the replay buffer before the model can learn better.
+        # Pass gets half the random mass; remaining legal actions split the other half.
+        legal = state['legal_actions']
+        n_legal = len(legal)
+        if 0 in legal and n_legal > 1 and any(a < 6 for a in legal):
+            epsilon = self.epsilons[min(self.total_t, self.epsilon_decay_steps - 1)]
+            if epsilon > 0:
+                greedy = int(np.argmax(A))
+                A_new = np.zeros(self.action_num, dtype=float)
+                per_other = (epsilon * 0.5) / (n_legal - 1)
+                for a in legal:
+                    A_new[a] = per_other
+                A_new[0] = epsilon * 0.5  # pass takes half the random mass
+                A_new[greedy] += (1.0 - epsilon)
+                A = A_new / A_new.sum()
+
         action = np.random.choice(np.arange(len(A)), p=A)
         return action
 

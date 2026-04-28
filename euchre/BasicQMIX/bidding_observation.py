@@ -19,7 +19,8 @@ BIDDING_FEATURE_DIM = (
     4 +   # right bower by suit
     4 +   # left bower by suit
     4 +   # high trump cards by suit
-    4     # off-suit aces by suit
+    4 +   # off-suit aces by suit
+    1     # partner already passed this round
 )
 OBS_DIM = BASE_OBS_DIM + BIDDING_FEATURE_DIM
 
@@ -95,6 +96,18 @@ def _trump_strength_features(hand_cards):
     return counts, right_bower, left_bower, high_trump, off_suit_aces
 
 
+def _partner_passed_this_round(game, player_id):
+    """1.0 if the partner bid before this player in the current round (and thus passed)."""
+    if game.trump is not None or game.dealer_player_id is None:
+        return np.array([0.0], dtype=np.float32)
+    partner_id = (player_id + 2) % 4
+    # Acting order within a round: left of dealer = 0, dealer = 3
+    my_order      = (player_id  - game.dealer_player_id - 1) % 4
+    partner_order = (partner_id - game.dealer_player_id - 1) % 4
+    # If partner acted first and it's still our turn, partner must have passed
+    return np.array([float(partner_order < my_order)], dtype=np.float32)
+
+
 def augment_state(env, state, player_id):
     game = env.game
     obs = state["obs"].astype(np.float32)
@@ -121,6 +134,7 @@ def augment_state(env, state, player_id):
         left_bower,
         high_trump,
         off_suit_aces,
+        _partner_passed_this_round(game, player_id),
     ]).astype(np.float32)
 
     state = dict(state)

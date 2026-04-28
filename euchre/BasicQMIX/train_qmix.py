@@ -460,7 +460,13 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
         elif trick_ended:
             new_tricks = game.score[0] + game.score[2]
             delta_team = new_tricks - prev_team_tricks   # 1 if QMIX won, 0 if opp won
-            trick_r    = 0.25 if delta_team == 1 else -0.25
+            team_is_maker = game.calling_player in (0, 2)
+            if delta_team == 1:
+                # Winning a trick as defender is a surprise steal; as maker it's expected
+                trick_r = 0.10 if team_is_maker else 0.40
+            else:
+                # Losing a trick as maker is a warning sign; as defender it's expected
+                trick_r = -0.35 if team_is_maker else -0.05
             prev_team_tricks = new_tricks
             flush(trick_r)
         elif 0 in buf and 2 in buf and len(game.center) == 0:
