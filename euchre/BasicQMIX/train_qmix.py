@@ -27,6 +27,7 @@ from copy import deepcopy
 import rlcard
 from rlcard.agents.dqn_agent_pytorch import DQNAgent, JointMemory
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
+from rlcard.utils.euchre_utils import ACTION_SPACE
 from bidding_observation import OBS_DIM, augment_state
 
 # ── Hyperparameters ────────────────────────────────────────────────────────────
@@ -40,13 +41,13 @@ BATCH_SIZE        = 64
 MEMORY_SIZE       = 500_000  # ~167k episodes of experience
 WARMUP_EPISODES   = 50_000   # ~1.7% of training before any gradients
 TRAIN_EVERY       = 1
-TARGET_SYNC_EVERY = 10_000   # hard sync every 10k episodes
+TARGET_SYNC_EVERY = 5_000   # hard sync every 10k episodes
 EVAL_EVERY        = 100_000  # 30 checkpoints over full run
 EVAL_GAMES        = 500      # win-rate estimates at each checkpoint
 
 GAMMA        = 0.99
-LR           = 5e-4
-EPSILON_START = 1.0
+LR           = 2e-4
+EPSILON_START = 0.5
 EPSILON_END   = 0.05
 EPSILON_STEPS = 15_000_000
 
@@ -328,8 +329,9 @@ def pretrain_bidding(env, agent0: DQNAgent, agent2: DQNAgent,
                      n_games: int = 10_000,
                      epochs: int = 5,
                      batch_size: int = 256,
-                     lr: float = 1e-3) -> None:
-    # behavioral cloning on bidding phase: train Q-nets to match rule agent choices
+                     lr: float = 1e-3,
+                     call_rate: float = 0.2) -> None:
+    # behavioral cloning: pass 80% of the time when optional, call 20%
     rule = EuchreRuleAgent()
     data: dict[int, list] = {0: [], 2: []}
 
@@ -339,6 +341,9 @@ def pretrain_bidding(env, agent0: DQNAgent, agent2: DQNAgent,
             if env.game.trump is None and player_id in (0, 2):
                 aug = augment_state(env, state, player_id)
                 rule_action = rule.step(state)
+                # if rule would call and pass is legal, override to pass with (1 - call_rate) prob
+                if 'pass' in state['raw_legal_actions'] and np.random.random() > call_rate:
+                    rule_action = ACTION_SPACE['pass']
                 data[player_id].append((aug['obs'].copy(), rule_action))
             state, player_id = env.step(rule.step(state))
 
@@ -570,9 +575,9 @@ if __name__ == '__main__':
     # set_agents so env knows about agents (needed for allow_raw_data detection)
     env.set_agents([agent0, opp_agents[1], agent2, opp_agents[3]])
 
-    # pre-train bidding policy to match rule agent before RL training
-    # print("Pre-training bidding policy from rule agent...")
-    # pretrain_bidding(env, agent0, agent2)
+    # pre-train bidding policy: pass 80% / call 20% to counter overcalling bias
+    print("Pre-training bidding policy (conservative)...")
+    pretrain_bidding(env, agent0, agent2)
 
     # ── training ──────────────────────────────────────────────────────────────
     print("=" * 60)
