@@ -202,7 +202,7 @@ button.wide {
 .table-stage {
   position: relative;
   margin-top: 18px;
-  min-height: 610px;
+  min-height: 700px;
   border-radius: 28px;
   background:
     radial-gradient(circle at center, rgba(255, 245, 204, 0.12), transparent 30%),
