@@ -6,7 +6,7 @@ with an MCTS search where:
   - The belief sampler produces plausible hidden deals for the acting player.
   - QMIX Q-values serve as a prior (PUCT, eq. 28) and leaf evaluator (V_mix, eq. 26).
   - Partner actions inside simulations are drawn from the partner's Q-policy (eq. 25).
-  - Opponent actions inside simulations are random (upgradeable to rule-based).
+  - Opponent actions inside simulations follow the rule-based agent policy.
 
 Training is unchanged — this module is inference-only.
 """
@@ -22,6 +22,7 @@ from copy import deepcopy
 
 from rlcard.utils.euchre_utils import ACTION_SPACE, ACTION_LIST
 from rlcard.core import Card
+from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +310,7 @@ class SBCVTAgent:
             2: BeliefSampler(player_id=2),
         }
         self._bidding_snapshots: list = []
+        self._rule_agent = EuchreRuleAgent()
 
     # ------------------------------------------------------------------
     # Public interface
@@ -474,9 +476,22 @@ class SBCVTAgent:
         return int(np.random.choice(legal, p=probs))
 
     def _opponent_action(self, game) -> int:
-        """Random legal action for opponents (upgradeable to rule-based)."""
-        legal = [ACTION_SPACE[a] for a in game.get_legal_actions()]
-        return random.choice(legal)
+        """Rule-based action for opponents during rollouts."""
+        player_id = game.current_player
+        legal_strs = game.get_legal_actions()
+        state = {
+            'raw_legal_actions': legal_strs,
+            'hand': [c.get_index() for c in game.players[player_id].hand],
+            'trump_called': game.trump is not None,
+            'trump': game.trump,
+            'turned_down': game.turned_down,
+            'lead_suit': game.lead_suit,
+            'flipped': game.flipped_card.get_index() if game.flipped_card is not None else None,
+            'center': game.center,
+            'order': game.order,
+            'seen': game.seen,
+        }
+        return self._rule_agent.step(state)
 
     # ------------------------------------------------------------------
     # Action selection from root statistics
