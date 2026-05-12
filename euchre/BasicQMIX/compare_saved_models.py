@@ -72,6 +72,18 @@ MODEL_SPECS = [
         'kind': 'qmix',
         'path': os.path.join(PERSONALITIES_DIR, 'qmix_timid.pt'),
     },
+    {
+        'key': 'qmix',
+        'label': 'QMIX',
+        'kind': 'qmix',
+        'path': os.path.join(ROOT, 'qmix_euchre.pt'),
+    },
+    {
+        'key': 'qmix_mcts',
+        'label': 'QMIX+MCTS Training',
+        'kind': 'qmix',
+        'path': os.path.join(ROOT, 'qmix_mcts.pt'),
+    },
 ]
 
 

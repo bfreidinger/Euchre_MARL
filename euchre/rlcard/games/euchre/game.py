@@ -43,6 +43,7 @@ class EuchreGame(object):
         self.calling_player = None
         self.lead_suit = None
         self.turned_down = None
+        self.turned_down_card = None
         self.seen = np.zeros(24)
 
         self.current_player = self._increment_player(self.dealer_player_id)
@@ -153,6 +154,7 @@ class EuchreGame(object):
     def _perform_pass(self):
         if self.current_player == self.dealer_player_id:
             self.turned_down = self.flipped_card.suit
+            self.turned_down_card = self.flipped_card.get_index()
             self.flipped_card = None
         self.current_player = self._increment_player(self.current_player)
 
