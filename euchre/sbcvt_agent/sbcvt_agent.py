@@ -294,7 +294,11 @@ class SBCVTAgent:
                  temperature: float = 1.0,
                  n_candidates: int = 200,
                  epsilon: float = 0.0,
-                 device=None):
+                 device=None,
+                 use_target_nets: bool = False,
+                 rollout_bid_rule: bool = False,
+                 rollout_to_end: bool = False,
+                 target_mixer=None):
 
         self.agents = {0: agent0, 2: agent2}
         self.mixer = mixer
@@ -307,6 +311,23 @@ class SBCVTAgent:
         self.device = device or torch.device('cpu')
 
         self.epsilon = epsilon
+
+        # When True, card-play rollouts use the agents' target networks for
+        # stability. target_mixer must be kept in sync by the training loop
+        # (sbcvt.target_mixer = qmix.target_mixer after each sync_targets()).
+        self.use_target_nets = use_target_nets
+        self.target_mixer = target_mixer
+
+        # When True, non-acting-player bidding inside rollouts uses the
+        # rule-based agent instead of the Q-network (avoids propagating
+        # a biased or random Q-prior into MCTS bidding evaluations).
+        self.rollout_bid_rule = rollout_bid_rule
+
+        # When True, unvisited leaf nodes are evaluated by playing the game
+        # to completion with rule-based agents rather than using the Q-network
+        # value estimate. This gives actual final payoffs (+1/+2/-1/-2) and
+        # is correct from episode 1 regardless of Q-network training progress.
+        self.rollout_to_end = rollout_to_end
 
         self.belief_samplers = {
             0: BeliefSampler(player_id=0),
@@ -377,25 +398,29 @@ class SBCVTAgent:
             return payoffs.get(0, 0.0)
 
         if depth >= self.max_depth:
-            return self._leaf_value(game)
+            return self._rollout_to_end(game) if self.rollout_to_end else self._leaf_value(game)
 
         current_player = game.current_player
 
         if current_player == acting_player:
             action_id = self._puct_select(node, current_player, game)
         elif current_player in (0, 2):
-            action_id = self._partner_action(game, current_player)
+            if self.rollout_bid_rule and game.trump is None:
+                action_id = self._opponent_action(game)  # rule-based for partner bidding
+            else:
+                action_id = self._partner_action(game, current_player)
         else:
             action_id = self._opponent_action(game)
 
         game.step(ACTION_LIST[action_id])
 
-        # First visit to this child: evaluate with leaf value and add to tree.
+        # First visit to this child: evaluate and add to tree.
         # Subsequent visits: recurse deeper into the existing child node.
         if action_id not in node.children:
             next_legal = [ACTION_SPACE[a] for a in game.get_legal_actions()]
             node.children[action_id] = MCTSNode(next_legal)
-            G = self._leaf_value(game)
+            G = (self._rollout_to_end(game) if self.rollout_to_end
+                 else self._leaf_value(game))
         else:
             G = self._simulate(game, node.children[action_id], acting_player, depth + 1)
 
@@ -456,14 +481,46 @@ class SBCVTAgent:
         gs_t   = torch.FloatTensor(gs).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            q0 = self.agents[0].q_estimator.qnet(obs0_t)   # (1, 54)
-            q2 = self.agents[2].q_estimator.qnet(obs2_t)   # (1, 54)
+            if self.use_target_nets:
+                q0 = self.agents[0].target_estimator.qnet(obs0_t)
+                q2 = self.agents[2].target_estimator.qnet(obs2_t)
+                mixer = self.target_mixer if self.target_mixer is not None else self.mixer
+            else:
+                q0 = self.agents[0].q_estimator.qnet(obs0_t)
+                q2 = self.agents[2].q_estimator.qnet(obs2_t)
+                mixer = self.mixer
             q0_max = q0.max(dim=1)[0]                        # (1,)
             q2_max = q2.max(dim=1)[0]                        # (1,)
             q_agents = torch.stack([q0_max, q2_max], dim=1) # (1, 2)
-            v_mix = self.mixer(q_agents, gs_t)               # (1, 1)
+            v_mix = mixer(q_agents, gs_t)                    # (1, 1)
 
         return v_mix.item()
+
+    def _rollout_to_end(self, game) -> float:
+        """
+        Play the game to completion using rule-based agents for all players.
+        Returns the actual final payoff for player 0's team (+1/+2/-1/-2).
+        The game object is mutated in place — callers must pass a copy.
+        """
+        while not game.is_over():
+            player_id  = game.current_player
+            legal_strs = game.get_legal_actions()
+            state = {
+                'raw_legal_actions': legal_strs,
+                'hand':        [c.get_index() for c in game.players[player_id].hand],
+                'trump_called': game.trump is not None,
+                'trump':        game.trump,
+                'turned_down':  game.turned_down,
+                'lead_suit':    game.lead_suit,
+                'flipped':      (game.flipped_card.get_index()
+                                 if game.flipped_card is not None else None),
+                'center':       game.center,
+                'order':        game.order,
+                'seen':         game.seen,
+            }
+            action_id = self._rule_agent.step(state)
+            game.step(ACTION_LIST[action_id])
+        return game.get_payoffs().get(0, 0.0)
 
     def _partner_action(self, game, partner_id: int) -> int:
         """
@@ -475,7 +532,10 @@ class SBCVTAgent:
         obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            q_vals = self.agents[partner_id].q_estimator.qnet(obs_t)[0]  # (54,)
+            if self.use_target_nets:
+                q_vals = self.agents[partner_id].target_estimator.qnet(obs_t)[0]
+            else:
+                q_vals = self.agents[partner_id].q_estimator.qnet(obs_t)[0]
 
         legal_q = torch.tensor(
             [q_vals[a].item() for a in legal], dtype=torch.float32
