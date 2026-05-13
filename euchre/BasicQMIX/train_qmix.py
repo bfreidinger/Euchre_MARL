@@ -237,7 +237,7 @@ class QMIXSystem:
 # ── Episode Runner ─────────────────────────────────────────────────────────────
 
 def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
-                joint_memory: JointMemory) -> float:
+                joint_memory: JointMemory, sbcvt_agent=None) -> tuple:
     """
     Play one full hand and store joint transitions.
 
@@ -247,10 +247,18 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
       • After both agents have acted during the bidding phase
         (reward = 0, no trick reward yet).
 
-    Returns the final game payoff for the QMIX team (player 0's payoff).
+    When sbcvt_agent is provided, MCTS replaces epsilon-greedy for all
+    trump-calling decisions; card play remains epsilon-greedy.
+
+    Returns (payoff, called, euchred):
+      payoff  – player 0's payoff for this hand
+      called  – True if the QMIX team (0 or 2) called trump
+      euchred – True if the QMIX team called trump and was euchred
     """
     game = env.game
     state, player_id = env.reset()
+    if sbcvt_agent is not None:
+        sbcvt_agent.new_hand()
 
     # buf[p] = (obs_vec, action_id) for team player p
     buf: dict = {}
@@ -292,11 +300,20 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
     while not env.is_over():
 
         # ── action selection ──────────────────────────────────────────────────
+        is_bidding = game.trump is None
         if player_id == 0:
-            action = qmix.agent0.step(state)
+            if sbcvt_agent is not None and is_bidding:
+                action = sbcvt_agent.step(state, player_id=0)
+                sbcvt_agent.record_action(0, action, game)
+            else:
+                action = qmix.agent0.step(state)
             qmix.agent0.total_t += 1      # drives epsilon decay
         elif player_id == 2:
-            action = qmix.agent2.step(state)
+            if sbcvt_agent is not None and is_bidding:
+                action = sbcvt_agent.step(state, player_id=2)
+                sbcvt_agent.record_action(2, action, game)
+            else:
+                action = qmix.agent2.step(state)
             qmix.agent2.total_t += 1
         else:
             action = opp_agents[player_id].step(state)
@@ -328,22 +345,29 @@ def run_episode(env, qmix: QMIXSystem, opp_agents: dict,
         state     = next_state
         player_id = next_player_id
 
-    return game.get_payoffs().get(0, 0)
+    payoff = game.get_payoffs().get(0, 0)
+    called  = game.calling_player in {0, 2}
+    euchred = called and payoff == -2
+    return payoff, called, euchred
 
 
 # ── Evaluation ─────────────────────────────────────────────────────────────────
 
 def evaluate(env, qmix: QMIXSystem, opp_agents: dict,
-             n_games: int = EVAL_GAMES) -> tuple[float, float]:
+             n_games: int = EVAL_GAMES) -> tuple[float, float, float, float]:
     """
     Greedy evaluation (no exploration).
 
     Returns:
-        win_rate  – fraction of hands where team 0&2 wins
-        avg_payoff – average payoff for player 0
+        win_rate        – fraction of games where team 0&2 wins
+        avg_payoff      – average payoff for player 0
+        call_rate       – fraction of hands where team 0&2 called trump
+        euchre_rate     – fraction of team calls that resulted in a euchre
     """
-    wins   = 0
-    total  = 0.0
+    wins            = 0
+    total           = 0.0
+    calls           = 0
+    euchres_as_caller = 0
 
     for _ in range(n_games):
         state, player_id = env.reset()
@@ -356,13 +380,17 @@ def evaluate(env, qmix: QMIXSystem, opp_agents: dict,
                 action, _ = opp_agents[player_id].eval_step(state)
             state, player_id = env.step(action)
 
-        payoffs = env.game.get_payoffs()
-        p = payoffs.get(0, 0)
+        p = env.game.get_payoffs().get(0, 0)
         total += p
         if p > 0:
             wins += 1
+        if env.game.calling_player in {0, 2}:
+            calls += 1
+            if p == -2:
+                euchres_as_caller += 1
 
-    return wins / n_games, total / n_games
+    euchre_rate = euchres_as_caller / max(calls, 1)
+    return wins / n_games, total / n_games, calls / n_games, euchre_rate
 
 
 # ── Main Training Loop ─────────────────────────────────────────────────────────
@@ -437,19 +465,20 @@ if __name__ == '__main__':
 
         # evaluation checkpoint
         if ep % EVAL_EVERY == 0:
-            win_rate, avg_payoff = evaluate(env, qmix, opp_agents)
+            win_rate, avg_payoff, call_rate, euchre_rate = evaluate(env, qmix, opp_agents)
             avg_loss = np.mean(recent_losses[-EVAL_EVERY:]) if recent_losses else float('nan')
             eps0 = qmix.agent0.epsilons[min(qmix.agent0.total_t, EPSILON_STEPS - 1)]
             print(f"{ep:>8}  {avg_loss:>9.4f}  {win_rate*100:>7.1f}%  {avg_payoff:>+10.3f}"
-                  f"   ε={eps0:.3f}")
+                  f"  call={call_rate*100:>4.1f}%  euchre/call={euchre_rate*100:>4.1f}%  ε={eps0:.3f}")
             eval_episodes.append(ep)
             eval_win_rates.append(win_rate * 100)
             eval_avg_payoffs.append(avg_payoff)
 
     # ── final evaluation ──────────────────────────────────────────────────────
     print("=" * 60)
-    win_rate, avg_payoff = evaluate(env, qmix, opp_agents, n_games=2000)
-    print(f"Final (1000 games):  win={win_rate*100:.1f}%  avg_payoff={avg_payoff:+.3f}")
+    win_rate, avg_payoff, call_rate, euchre_rate = evaluate(env, qmix, opp_agents, n_games=2000)
+    print(f"Final (2000 games):  win={win_rate*100:.1f}%  avg_payoff={avg_payoff:+.3f}"
+          f"  call={call_rate*100:.1f}%  euchre/call={euchre_rate*100:.1f}%")
 
     qmix.save(os.path.join(os.path.dirname(__file__), 'qmix_euchre.pt'))
 

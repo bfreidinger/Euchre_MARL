@@ -293,6 +293,7 @@ class SBCVTAgent:
                  c_puct: float = 1.0,
                  temperature: float = 1.0,
                  n_candidates: int = 200,
+                 epsilon: float = 0.0,
                  device=None):
 
         self.agents = {0: agent0, 2: agent2}
@@ -304,6 +305,8 @@ class SBCVTAgent:
         self.temperature = temperature
         self.n_candidates = n_candidates
         self.device = device or torch.device('cpu')
+
+        self.epsilon = epsilon
 
         self.belief_samplers = {
             0: BeliefSampler(player_id=0),
@@ -406,8 +409,13 @@ class SBCVTAgent:
         """
         PUCT selection rule (eq. 28). Uses QMIX Q-values as a prior policy
         over legal actions (eq. 25) to bias exploration toward promising moves.
+
+        When self.epsilon > 0, a random legal action is chosen with that
+        probability before PUCT runs (used during training for exploration).
         """
         legal = node.legal_actions
+        if self.epsilon > 0 and random.random() < self.epsilon:
+            return random.choice(legal)
         obs = _extract_obs(game, player_id)
         obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
 
