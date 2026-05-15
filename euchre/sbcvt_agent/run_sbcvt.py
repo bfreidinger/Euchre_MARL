@@ -31,11 +31,11 @@ from sbcvt_agent import SBCVTAgent
 # Defaults (override via CLI or edit here)
 # ---------------------------------------------------------------------------
 
-DEFAULT_CKPT    = os.path.join(os.path.dirname(__file__), '..', 'BasicQMIX', 'qmix_euchre.pt')
+DEFAULT_CKPT    = os.path.join(os.path.dirname(__file__), '..', 'BasicQMIX', 'qmix_hybrid.pt')
 DEFAULT_OPP     = 'rule'   # 'random' | 'rule' | 'qmix'
 DEFAULT_PARTNER = 'qmix'     # 'qmix'   | 'sbcvt'
 DEFAULT_SIMS    = 100        # MCTS simulations per decision
-DEFAULT_DEPTH   = 5          # max rollout depth before QMIX leaf eval
+DEFAULT_DEPTH   = 10         # max rollout depth before QMIX leaf eval
 DEFAULT_GAMES   = 100        # number of full games (each first to WIN_TARGET)
 WIN_TARGET      = 10
 
@@ -52,6 +52,8 @@ def parse_args():
     p.add_argument('--depth',   default=DEFAULT_DEPTH,   type=int)
     p.add_argument('--games',   default=DEFAULT_GAMES,   type=int)
     p.add_argument('--quiet',   action='store_true',     help='suppress per-hand output')
+    p.add_argument('--hybrid',  action='store_true',
+                   help='hybrid mode: MCTS for bidding only, greedy QMIX for card play')
     return p.parse_args()
 
 
@@ -125,6 +127,8 @@ def run(args):
         num_sims=args.sims,
         max_depth=args.depth,
         device=device,
+        rollout_to_end=args.hybrid,
+        rollout_bid_rule=args.hybrid,
     )
 
     if args.partner == 'sbcvt':
@@ -145,11 +149,13 @@ def run(args):
     game_results = []
     total_hands  = 0
 
+    mode = 'Hybrid (MCTS bid / QMIX cards)' if args.hybrid else 'SBCVT (MCTS all)'
     print(f"\n{'='*62}")
-    print(f"  SBCVT (sims={args.sims}, depth={args.depth})")
-    print(f"  Partner  : {partner_label}")
-    print(f"  Opponents: {opp_label}")
-    print(f"  Games    : {args.games} × first to {WIN_TARGET} pts")
+    print(f"  {mode}  sims={args.sims}  depth={args.depth}")
+    print(f"  Checkpoint: {args.ckpt}")
+    print(f"  Partner   : {partner_label}")
+    print(f"  Opponents : {opp_label}")
+    print(f"  Games     : {args.games} × first to {WIN_TARGET} pts")
     print(f"{'='*62}")
 
     for game_idx in range(args.games):
@@ -167,10 +173,16 @@ def run(args):
             sbcvt0.new_hand()
 
             while not env.is_over():
+                is_bidding = env.game.trump is None
                 if player_id == 0:
-                    action = sbcvt0.step(state, player_id=0)
+                    if args.hybrid and not is_bidding:
+                        action, _ = qmix.agent0.eval_step(state)
+                    else:
+                        action = sbcvt0.step(state, player_id=0)
                 elif player_id == 2:
-                    if args.partner == 'sbcvt':
+                    if args.hybrid and not is_bidding:
+                        action, _ = qmix.agent2.eval_step(state)
+                    elif args.partner == 'sbcvt':
                         action = sbcvt0.step(state, player_id=2)
                     else:
                         action, _ = partner2.eval_step(state)
