@@ -45,8 +45,9 @@ WIN_TARGET      = 10
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument('--ckpt',    default=DEFAULT_CKPT,    help='QMIX checkpoint path')
-    p.add_argument('--opp',     default=DEFAULT_OPP,     choices=['random', 'rule', 'qmix'])
+    p.add_argument('--ckpt',     default=DEFAULT_CKPT,   help='QMIX checkpoint for the SBCVT team')
+    p.add_argument('--opp_ckpt', default=None,           help='QMIX checkpoint for opponents (defaults to --ckpt)')
+    p.add_argument('--opp',      default=DEFAULT_OPP,    choices=['random', 'rule', 'qmix'])
     p.add_argument('--partner', default=DEFAULT_PARTNER, choices=['qmix', 'sbcvt'])
     p.add_argument('--sims',    default=DEFAULT_SIMS,    type=int)
     p.add_argument('--depth',   default=DEFAULT_DEPTH,   type=int)
@@ -138,7 +139,8 @@ def run(args):
         partner2 = qmix.agent2   # greedy QMIX eval_step
         partner_label = 'QMIX-greedy'
 
-    opp1, opp3, opp_label = make_opponents(args.opp, args.ckpt, device)
+    opp_ckpt = args.opp_ckpt if args.opp_ckpt is not None else args.ckpt
+    opp1, opp3, opp_label = make_opponents(args.opp, opp_ckpt, device)
 
     # Stats trackers
     hand_stats = {
