@@ -298,9 +298,13 @@ class SBCVTAgent:
                  use_target_nets: bool = False,
                  rollout_bid_rule: bool = False,
                  rollout_to_end: bool = False,
-                 target_mixer=None):
+                 target_mixer=None,
+                 team: tuple = (0, 2)):
 
-        self.agents = {0: agent0, 2: agent2}
+        self._p0, self._p1 = team          # e.g. (0,2) or (1,3)
+        self._team_ids = set(team)
+        self._payoff_player = team[0]       # whose payoff represents the team reward
+        self.agents = {team[0]: agent0, team[1]: agent2}
         self.mixer = mixer
         self.env = env
         self.num_sims = num_sims
@@ -330,8 +334,8 @@ class SBCVTAgent:
         self.rollout_to_end = rollout_to_end
 
         self.belief_samplers = {
-            0: BeliefSampler(player_id=0),
-            2: BeliefSampler(player_id=2),
+            self._p0: BeliefSampler(player_id=self._p0),
+            self._p1: BeliefSampler(player_id=self._p1),
         }
         self._bidding_snapshots: list = []
         self._rule_agent = EuchreRuleAgent()
@@ -362,7 +366,7 @@ class SBCVTAgent:
         root = MCTSNode(legal_actions)
 
         # Build a weighted pool once per step when in bidding phase and partner has acted.
-        partner_id = 2 if player_id == 0 else 0
+        partner_id = self._p1 if player_id == self._p0 else self._p0
         partner_snaps = [s for s in self._bidding_snapshots if s.player_id == partner_id]
         use_weighted = game.trump is None and bool(partner_snaps)
 
@@ -395,7 +399,7 @@ class SBCVTAgent:
         """
         if game.is_over():
             payoffs = game.get_payoffs()
-            return payoffs.get(0, 0.0)
+            return payoffs.get(self._payoff_player, 0.0)
 
         if depth >= self.max_depth:
             return self._rollout_to_end(game) if self.rollout_to_end else self._leaf_value(game)
@@ -404,7 +408,7 @@ class SBCVTAgent:
 
         if current_player == acting_player:
             action_id = self._puct_select(node, current_player, game)
-        elif current_player in (0, 2):
+        elif current_player in self._team_ids:
             if self.rollout_bid_rule and game.trump is None:
                 action_id = self._opponent_action(game)  # rule-based for partner bidding
             else:
@@ -470,10 +474,10 @@ class SBCVTAgent:
         """
         if game.is_over():
             payoffs = game.get_payoffs()
-            return payoffs.get(0, 0.0)
+            return payoffs.get(self._payoff_player, 0.0)
 
-        obs0 = _extract_obs(game, 0)
-        obs2 = _extract_obs(game, 2)
+        obs0 = _extract_obs(game, self._p0)
+        obs2 = _extract_obs(game, self._p1)
         gs   = _extract_global_state(game)
 
         obs0_t = torch.FloatTensor(obs0).unsqueeze(0).to(self.device)
@@ -482,12 +486,12 @@ class SBCVTAgent:
 
         with torch.no_grad():
             if self.use_target_nets:
-                q0 = self.agents[0].target_estimator.qnet(obs0_t)
-                q2 = self.agents[2].target_estimator.qnet(obs2_t)
+                q0 = self.agents[self._p0].target_estimator.qnet(obs0_t)
+                q2 = self.agents[self._p1].target_estimator.qnet(obs2_t)
                 mixer = self.target_mixer if self.target_mixer is not None else self.mixer
             else:
-                q0 = self.agents[0].q_estimator.qnet(obs0_t)
-                q2 = self.agents[2].q_estimator.qnet(obs2_t)
+                q0 = self.agents[self._p0].q_estimator.qnet(obs0_t)
+                q2 = self.agents[self._p1].q_estimator.qnet(obs2_t)
                 mixer = self.mixer
             q0_max = q0.max(dim=1)[0]                        # (1,)
             q2_max = q2.max(dim=1)[0]                        # (1,)
@@ -520,7 +524,7 @@ class SBCVTAgent:
             }
             action_id = self._rule_agent.step(state)
             game.step(ACTION_LIST[action_id])
-        return game.get_payoffs().get(0, 0.0)
+        return game.get_payoffs().get(self._payoff_player, 0.0)
 
     def _partner_action(self, game, partner_id: int) -> int:
         """

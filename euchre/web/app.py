@@ -20,18 +20,25 @@ from rlcard.agents.dqn_agent_pytorch import DQNAgent
 from rlcard.agents.euchre_rule_agent import EuchreRuleAgent
 from rlcard.agents.random_agent import RandomAgent
 from rlcard.utils.euchre_utils import ACTION_LIST
+from BasicQMIX.train_qmix import QMIXSystem
+from sbcvt_agent.sbcvt_agent import SBCVTAgent
 
 
 ACTION_NUM = 54
 OBS_DIM = 48
 MATCH_TARGET = 10
+MCTS_SIMS_WEB = 15  # MCTS sims per bidding decision in the web app
 
 CHECKPOINTS = {
     "baseline": os.path.join(ROOT_DIR, "BasicQMIX", "qmix_euchre.pt"),
     "neutral": os.path.join(ROOT_DIR, "BasicQMIX", "qmix_neutral.pt"),
     "aggressive": os.path.join(ROOT_DIR, "Personalities", "qmix_aggressive.pt"),
     "timid": os.path.join(ROOT_DIR, "Personalities", "qmix_timid.pt"),
+    "hybrid": os.path.join(ROOT_DIR, "BasicQMIX", "qmix_hybrid.pt"),
 }
+
+# Only expose hybrid if the checkpoint has been trained
+_HYBRID_READY = os.path.exists(CHECKPOINTS["hybrid"])
 
 POLICY_LABELS = {
     "rule": "Rule-based",
@@ -41,6 +48,8 @@ POLICY_LABELS = {
     "aggressive": "Aggressive QMIX",
     "timid": "Timid QMIX",
 }
+if _HYBRID_READY:
+    POLICY_LABELS["hybrid"] = "Hybrid MCTS-QMIX"
 
 SUIT_SYMBOLS = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
 RANK_LABELS = {"A": "A", "K": "K", "Q": "Q", "J": "J", "T": "10", "9": "9"}
@@ -58,12 +67,52 @@ ENV = Environment(
 SESSIONS = {}
 SESSION_LOCK = threading.Lock()
 CHECKPOINT_CACHE = {}
+QMIX_SYSTEM_CACHE = {}
 
 
 def load_checkpoint(path):
     if path not in CHECKPOINT_CACHE:
         CHECKPOINT_CACHE[path] = torch.load(path, map_location="cpu")
     return CHECKPOINT_CACHE[path]
+
+
+def load_qmix_system(path, scope_prefix="hybrid_web"):
+    """Load a full QMIXSystem (both Q-nets + mixer) and cache it by path+scope."""
+    cache_key = f"{path}|{scope_prefix}"
+    if cache_key not in QMIX_SYSTEM_CACHE:
+        agent0 = DQNAgent(scope=f"{scope_prefix}_0", action_num=ACTION_NUM,
+                          state_shape=[OBS_DIM], mlp_layers=[128, 128])
+        agent2 = DQNAgent(scope=f"{scope_prefix}_2", action_num=ACTION_NUM,
+                          state_shape=[OBS_DIM], mlp_layers=[128, 128])
+        qmix = QMIXSystem(agent0, agent2)
+        ckpt = load_checkpoint(path)
+        agent0.q_estimator.qnet.load_state_dict(ckpt["agent0_qnet"])
+        agent2.q_estimator.qnet.load_state_dict(ckpt["agent2_qnet"])
+        qmix.mixer.load_state_dict(ckpt["mixer"])
+        qmix.sync_targets()
+        QMIX_SYSTEM_CACHE[cache_key] = qmix
+    return QMIX_SYSTEM_CACHE[cache_key]
+
+
+class HybridAgentWrapper:
+    """
+    Presents eval_step(state) for use in MatchSession.
+    Routes bidding decisions through MCTS (SBCVTAgent) and card-play
+    decisions through the greedy QMIX Q-network.
+    """
+
+    def __init__(self, sbcvt, dqn, player_id):
+        self._sbcvt = sbcvt
+        self._dqn = dqn
+        self._player_id = player_id
+
+    def eval_step(self, state):
+        game = self._sbcvt.env.game
+        if game.trump is None:  # bidding phase — use MCTS
+            action = self._sbcvt.step(state, player_id=self._player_id)
+            self._sbcvt.record_action(self._player_id, action, game)
+            return action, None
+        return self._dqn.eval_step(state)  # card play — greedy QMIX
 
 
 def build_model_policy(family, role):
@@ -222,15 +271,55 @@ class MatchSession:
     trump_call_label: str = field(init=False, default="")
     current_trick_actions: list = field(init=False, default_factory=list)
     completed_tricks: list = field(init=False, default_factory=list)
+    _sbcvt: object = field(init=False, default=None)           # shared SBCVTAgent for team (0,2)
+    _hybrid_qmix: object = field(init=False, default=None)    # QMIXSystem backing _sbcvt
+    _sbcvt_opp: object = field(init=False, default=None)      # shared SBCVTAgent for team (1,3)
+    _hybrid_qmix_opp: object = field(init=False, default=None)
 
     def __post_init__(self):
-        if self.mode == "spectator":
-            self.south_agent = build_model_policy(self.south_family, "south")
-        self.partner_agent = build_model_policy(self.partner_family, "partner")
-        self.opp_left_agent = build_model_policy(self.opp_left_family, "opp_left")
-        self.opp_right_agent = build_model_policy(self.opp_right_family, "opp_right")
+        # env must exist before hybrid agents (SBCVTAgent needs it for belief sampling)
         self.env = rlcard.make("euchre", config={"num_players": 4})
+        if self.mode == "spectator":
+            self.south_agent = self._make_agent(self.south_family, 0)
+        self.partner_agent  = self._make_agent(self.partner_family,   2)
+        self.opp_left_agent = self._make_agent(self.opp_left_family,  1)
+        self.opp_right_agent = self._make_agent(self.opp_right_family, 3)
         self.start_hand()
+
+    def _make_agent(self, family, player_id):
+        """Build an agent for the given seat.  Hybrid seats (0 & 2) share one SBCVTAgent."""
+        if family != "hybrid":
+            role = {0: "south", 1: "opp_left", 2: "partner", 3: "opp_right"}[player_id]
+            return build_model_policy(family, role)
+
+        if player_id in (0, 2):
+            if self._sbcvt is None:
+                qmix = load_qmix_system(CHECKPOINTS["hybrid"], scope_prefix="hybrid_team02")
+                self._hybrid_qmix = qmix
+                self._sbcvt = SBCVTAgent(
+                    agent0=qmix.agent0, agent2=qmix.agent2, mixer=qmix.mixer,
+                    env=self.env, num_sims=MCTS_SIMS_WEB,
+                    rollout_to_end=True, rollout_bid_rule=True,
+                    use_target_nets=True, target_mixer=qmix.target_mixer,
+                    team=(0, 2),
+                )
+            dqn = self._hybrid_qmix.agent0 if player_id == 0 else self._hybrid_qmix.agent2
+            return HybridAgentWrapper(self._sbcvt, dqn, player_id)
+
+        # Opponents (1, 3) use same model weights with team=(1, 3)
+        if player_id in (1, 3):
+            if self._sbcvt_opp is None:
+                qmix_opp = load_qmix_system(CHECKPOINTS["hybrid"], scope_prefix="hybrid_team13")
+                self._hybrid_qmix_opp = qmix_opp
+                self._sbcvt_opp = SBCVTAgent(
+                    agent0=qmix_opp.agent0, agent2=qmix_opp.agent2, mixer=qmix_opp.mixer,
+                    env=self.env, num_sims=MCTS_SIMS_WEB,
+                    rollout_to_end=True, rollout_bid_rule=True,
+                    use_target_nets=True, target_mixer=qmix_opp.target_mixer,
+                    team=(1, 3),
+                )
+            dqn = self._hybrid_qmix_opp.agent0 if player_id == 1 else self._hybrid_qmix_opp.agent2
+            return HybridAgentWrapper(self._sbcvt_opp, dqn, player_id)
 
     def start_hand(self):
         self.hand_over = False
@@ -245,6 +334,10 @@ class MatchSession:
         self.current_trick_actions = []
         self.completed_tricks = []
         self.state, self.current_player = self.env.reset()
+        if self._sbcvt is not None:
+            self._sbcvt.new_hand()
+        if self._sbcvt_opp is not None:
+            self._sbcvt_opp.new_hand()
         self._update_turn_status()
 
     def _agent_for_player(self, player_id):
